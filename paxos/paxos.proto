@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+option go_package="github.com/fudute/paxos/paxos";
+
+package paxos;
+
+service Paxos {
+    rpc Prepare (PrepareRequest) returns (PrepareReply) {}
+    rpc Accept (AcceptRequest) returns (AcceptReply) {}
+}
+
+message PrepareRequest {
+    int64 ProposalNum = 1;
+}
+message PrepareReply {
+    int64 AcceptedProposal = 1;
+    string AcceptedValue = 2;
+}
+
+message AcceptRequest {
+    int64 ProposalNum = 1;
+    string ProposalValue = 2;
+}
+message AcceptReply {
+    int64 MiniProposal = 1;
+}
+
