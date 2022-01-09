@@ -1,34 +1,58 @@
 package main
 
 import (
-	"context"
+	"flag"
+	"fmt"
+	"log"
 	"net"
+	"sync"
+	"sync/atomic"
 
 	"github.com/fudute/paxos/paxos"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/grpclog"
 )
 
-type paxosServer struct {
-	paxos.UnimplementedPaxosServer
+var peers = []string{":8888", ":8889", ":8890"}
+
+type UUID struct {
+	id int64
 }
 
-func (*paxosServer) Prepare(context.Context, *paxos.PrepareRequest) (*paxos.PrepareReply, error) {
-	return &paxos.PrepareReply{}, nil
+func NewUUIDService() paxos.IDService {
+	return &UUID{}
 }
-func (*paxosServer) Accept(context.Context, *paxos.AcceptRequest) (*paxos.AcceptReply, error) {
-	return &paxos.AcceptReply{}, nil
+
+func (u *UUID) Next() int64 {
+	return atomic.AddInt64(&u.id, 1)
 }
 
 func main() {
-	s := grpc.NewServer()
-	s.RegisterService(&paxos.Paxos_ServiceDesc, &paxosServer{})
+	flag.Parse()
 
-	lis, err := net.Listen("tcp", "127.0.0.1:8888")
-	if err != nil {
-		grpclog.Fatal("listen failed", err)
+	for _, peer := range peers {
+		go func(peer string) {
+			s := grpc.NewServer()
+			s.RegisterService(&paxos.Paxos_ServiceDesc, paxos.NewService())
+			lis, err := net.Listen("tcp", peer)
+			if err != nil {
+				log.Fatal("listen failed", err)
+			}
+			log.Println("server listen at ", peer)
+			log.Fatal(s.Serve(lis))
+		}(peer)
 	}
 
-	grpclog.Info("server listen at 127.0.0.1:8888")
-	grpclog.Error(s.Serve(lis))
+	idService := NewUUIDService()
+
+	var wg sync.WaitGroup
+	var n int = 3
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			proposer := paxos.NewProposer(i, (n+1)/2, fmt.Sprint(i), peers, idService)
+			proposer.Start()
+		}(i)
+	}
+	wg.Wait()
 }
