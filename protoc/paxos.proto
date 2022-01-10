@@ -1,8 +1,8 @@
 syntax = "proto3";
 
-option go_package="github.com/fudute/paxos/paxos";
+option go_package="github.com/fudute/paxos/protoc";
 
-package paxos;
+package protoc;
 
 service Paxos {
     rpc Prepare (PrepareRequest) returns (PrepareReply) {}

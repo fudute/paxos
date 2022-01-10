@@ -8,7 +8,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/fudute/paxos/paxos"
+	"github.com/fudute/paxos"
+	pb "github.com/fudute/paxos/protoc"
 	"google.golang.org/grpc"
 )
 
@@ -32,7 +33,7 @@ func main() {
 	for _, peer := range peers {
 		go func(peer string) {
 			s := grpc.NewServer()
-			s.RegisterService(&paxos.Paxos_ServiceDesc, paxos.NewService())
+			s.RegisterService(&pb.Paxos_ServiceDesc, paxos.NewAcceptor())
 			lis, err := net.Listen("tcp", peer)
 			if err != nil {
 				log.Fatal("listen failed", err)

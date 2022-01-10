@@ -3,21 +3,23 @@ package paxos
 import (
 	context "context"
 	"sync"
+
+	pb "github.com/fudute/paxos/protoc"
 )
 
 type acceptor struct {
 	mu sync.Mutex
-	UnimplementedPaxosServer
+	pb.UnimplementedPaxosServer
 	miniProposal     int64
 	acceptedProposal int64
 	acceptedValue    string
 }
 
-func NewService() PaxosServer {
+func NewAcceptor() pb.PaxosServer {
 	return &acceptor{}
 }
 
-func (a *acceptor) Prepare(ctx context.Context, req *PrepareRequest) (*PrepareReply, error) {
+func (a *acceptor) Prepare(ctx context.Context, req *pb.PrepareRequest) (*pb.PrepareReply, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -25,12 +27,12 @@ func (a *acceptor) Prepare(ctx context.Context, req *PrepareRequest) (*PrepareRe
 		a.miniProposal = req.GetProposalNum()
 	}
 
-	return &PrepareReply{
+	return &pb.PrepareReply{
 		AcceptedProposal: a.acceptedProposal,
 		AcceptedValue:    a.acceptedValue,
 	}, nil
 }
-func (a *acceptor) Accept(ctx context.Context, req *AcceptRequest) (*AcceptReply, error) {
+func (a *acceptor) Accept(ctx context.Context, req *pb.AcceptRequest) (*pb.AcceptReply, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -40,7 +42,7 @@ func (a *acceptor) Accept(ctx context.Context, req *AcceptRequest) (*AcceptReply
 		a.acceptedValue = req.GetProposalValue()
 	}
 
-	return &AcceptReply{
+	return &pb.AcceptReply{
 		MiniProposal: a.miniProposal,
 	}, nil
 }
