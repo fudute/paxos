@@ -7,13 +7,12 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/fudute/paxos"
 	pb "github.com/fudute/paxos/protoc"
 	"google.golang.org/grpc"
 )
-
-var peers = []string{":8888", ":8889", ":8890"}
 
 type UUID struct {
 	id int64
@@ -28,7 +27,18 @@ func (u *UUID) Next() int64 {
 }
 
 func main() {
+	log.SetFlags(0)
 	flag.Parse()
+
+	var portStart = 8888
+	var nProposer, nAcceptor = 2, 5
+
+	var quorum = (nAcceptor + 1) / 2
+
+	var peers []string
+	for i := 0; i < nAcceptor; i++ {
+		peers = append(peers, fmt.Sprint(":", portStart+i))
+	}
 
 	for _, peer := range peers {
 		go func(peer string) {
@@ -45,15 +55,29 @@ func main() {
 
 	idService := NewUUIDService()
 
+	in := make(chan string, 3)
+	go func() {
+		defer close(in)
+		for i := 0; i < 10; i++ {
+			<-time.After(time.Second / 100)
+			in <- fmt.Sprint(i)
+		}
+	}()
+
 	var wg sync.WaitGroup
-	var n int = 3
-	for i := 0; i < n; i++ {
+	var proposers []*paxos.Proposer
+	for i := 0; i < nProposer; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			proposer := paxos.NewProposer(i, (n+1)/2, fmt.Sprint(i), peers, idService)
-			proposer.Start()
+			proposer := paxos.NewProposer(i, quorum, fmt.Sprint(i), peers, idService)
+			proposers = append(proposers, proposer)
+			proposer.Start(in)
 		}(i)
 	}
 	wg.Wait()
+
+	for _, p := range proposers {
+		fmt.Println(p.String())
+	}
 }

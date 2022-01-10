@@ -2,9 +2,8 @@ package paxos
 
 import (
 	"context"
-	"fmt"
 	"log"
-	"os"
+	"strings"
 	"sync"
 
 	pb "github.com/fudute/paxos/protoc"
@@ -21,15 +20,32 @@ type Proposer struct {
 	id                int
 	quorum            int
 	proposalGenerator IDService
-	value             string
 	acceptors         map[string]pb.PaxosClient
+
+	mu                 sync.Mutex
+	log                []*Slot
+	largestChosenIndex int64
+
+	wg sync.WaitGroup
+}
+
+type SlotStatus int
+
+const (
+	Unused    SlotStatus = 0
+	Chooseing SlotStatus = 1
+	Chosen    SlotStatus = 2
+)
+
+type Slot struct {
+	status SlotStatus
+	value  string
 }
 
 func NewProposer(id, quorum int, value string, acceptors []string, generator IDService) *Proposer {
 	proposer := &Proposer{
 		id:                id,
 		quorum:            quorum,
-		value:             value,
 		acceptors:         make(map[string]pb.PaxosClient),
 		proposalGenerator: generator,
 	}
@@ -45,37 +61,90 @@ func NewProposer(id, quorum int, value string, acceptors []string, generator IDS
 	return proposer
 }
 
-func (p *Proposer) Start() {
-	log := log.New(os.Stdout, fmt.Sprintf("[P%v] ", p.id), 0)
+func (p *Proposer) String() string {
+	b := strings.Builder{}
+	for _, s := range p.log {
+		b.WriteString(s.value)
+		b.WriteByte(' ')
+	}
+	return b.String()
+}
+
+func (p *Proposer) Start(in <-chan string) {
+	defer p.wg.Wait()
 	for {
-		n := p.proposalGenerator.Next()
-		prepareReplys := p.broadcast(n, func(n int64, addr string) interface{} { return p.onPrepare(n, addr) })
+		value, ok := <-in
+		if !ok {
+			log.Printf("[P%d] stopped, unable to read from input channel", p.id)
+			return
+		}
+
+		// 一直循环直到当前值被选定
+		p.wg.Add(1)
+		go func() {
+			defer p.wg.Done()
+			for {
+				chosen := p.chooseOne(value)
+				if value == chosen {
+					break
+				}
+			}
+		}()
+	}
+}
+
+func (p *Proposer) returnFirstUnChosen() int64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for i := p.largestChosenIndex + 1; i < int64(len(p.log)); i++ {
+		if p.log[i].status == Unused {
+			return int64(i)
+		}
+	}
+
+	slot := new(Slot)
+	slot.status = Chooseing
+	p.log = append(p.log, slot)
+	return int64(len(p.log) - 1)
+}
+
+func (p *Proposer) chooseOne(value string) (chosen string) {
+	index := p.returnFirstUnChosen()
+	for {
+		proposalNum := p.proposalGenerator.Next()
+		prepareReplys := p.broadcast(proposalNum, func(n int64, addr string) interface{} { return p.onPrepare(index, n, addr) })
 
 		var mini int64
 		for i := 0; i <= p.quorum; i++ {
 			reply := (<-prepareReplys).(*pb.PrepareReply)
 			if reply.AcceptedProposal > mini && reply.AcceptedValue != "" {
-				p.value = reply.AcceptedValue
+				value = reply.AcceptedValue
 				mini = reply.AcceptedProposal
 			}
 		}
 
-		acceptReplys := p.broadcast(n, func(n int64, addr string) interface{} { return p.onAccept(n, addr) })
+		acceptReplys := p.broadcast(proposalNum, func(n int64, addr string) interface{} { return p.onAccept(index, n, addr, value) })
 
 		isChosen := true
 		for i := 0; i <= p.quorum; i++ {
 			reply := (<-acceptReplys).(*pb.AcceptReply)
-			if reply.GetMiniProposal() > n {
+			if reply.GetMiniProposal() > proposalNum {
 				isChosen = false
 				break
 			}
 		}
 
 		if isChosen {
-			log.Printf("value is chosen: %v ", p.value)
-			return
+			p.log[index].status = Chosen
+			p.log[index].value = value
+			if index > p.largestChosenIndex {
+				p.largestChosenIndex = index
+			}
+			log.Printf("[P%d] value at index %v is chosen: %v ", p.id, index, value)
+			break
 		}
 	}
+	return value
 }
 
 func (p *Proposer) broadcast(n int64, f func(n int64, addr string) interface{}) <-chan interface{} {
@@ -100,9 +169,12 @@ func (p *Proposer) broadcast(n int64, f func(n int64, addr string) interface{}) 
 	return out
 }
 
-func (p *Proposer) onPrepare(n int64, addr string) *pb.PrepareReply {
+func (p *Proposer) onPrepare(index, proposalNum int64, addr string) *pb.PrepareReply {
 	if cli, ok := p.acceptors[addr]; ok {
-		reply, err := cli.Prepare(context.Background(), &pb.PrepareRequest{ProposalNum: n})
+		reply, err := cli.Prepare(context.Background(), &pb.PrepareRequest{
+			Index:       index,
+			ProposalNum: proposalNum,
+		})
 		if err != nil {
 			log.Printf("[P%d] Prepare on acceptor %v failed %v", p.id, addr, err)
 			return nil
@@ -112,11 +184,12 @@ func (p *Proposer) onPrepare(n int64, addr string) *pb.PrepareReply {
 	return nil
 }
 
-func (p *Proposer) onAccept(n int64, addr string) *pb.AcceptReply {
+func (p *Proposer) onAccept(index, proposalNum int64, addr string, value string) *pb.AcceptReply {
 	if cli, ok := p.acceptors[addr]; ok {
 		reply, err := cli.Accept(context.Background(), &pb.AcceptRequest{
-			ProposalNum:   n,
-			ProposalValue: p.value,
+			Index:         index,
+			ProposalNum:   proposalNum,
+			ProposalValue: value,
 		})
 		if err != nil {
 			log.Printf("[P%d] Accept on acceptor %v failed %v", p.id, addr, err)

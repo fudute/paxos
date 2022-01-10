@@ -8,8 +8,13 @@ import (
 )
 
 type acceptor struct {
-	mu sync.Mutex
 	pb.UnimplementedPaxosServer
+
+	ins sync.Map // key is index (int64), value is *Instance
+}
+
+type Instance struct {
+	mu               sync.Mutex
 	miniProposal     int64
 	acceptedProposal int64
 	acceptedValue    string
@@ -20,29 +25,37 @@ func NewAcceptor() pb.PaxosServer {
 }
 
 func (a *acceptor) Prepare(ctx context.Context, req *pb.PrepareRequest) (*pb.PrepareReply, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
 
-	if req.GetProposalNum() > a.miniProposal {
-		a.miniProposal = req.GetProposalNum()
+	actual, _ := a.ins.LoadOrStore(req.Index, new(Instance))
+	ins := actual.(*Instance)
+
+	ins.mu.Lock()
+	defer ins.mu.Unlock()
+
+	if req.GetProposalNum() > ins.miniProposal {
+		ins.miniProposal = req.GetProposalNum()
 	}
 
 	return &pb.PrepareReply{
-		AcceptedProposal: a.acceptedProposal,
-		AcceptedValue:    a.acceptedValue,
+		AcceptedProposal: ins.acceptedProposal,
+		AcceptedValue:    ins.acceptedValue,
 	}, nil
 }
-func (a *acceptor) Accept(ctx context.Context, req *pb.AcceptRequest) (*pb.AcceptReply, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
 
-	if req.GetProposalNum() >= a.miniProposal {
-		a.miniProposal = req.GetProposalNum()
-		a.acceptedProposal = a.miniProposal
-		a.acceptedValue = req.GetProposalValue()
+func (a *acceptor) Accept(ctx context.Context, req *pb.AcceptRequest) (*pb.AcceptReply, error) {
+	actual, _ := a.ins.LoadOrStore(req.Index, new(Instance))
+	ins := actual.(*Instance)
+
+	ins.mu.Lock()
+	defer ins.mu.Unlock()
+
+	if req.GetProposalNum() >= ins.miniProposal {
+		ins.miniProposal = req.GetProposalNum()
+		ins.acceptedProposal = ins.miniProposal
+		ins.acceptedValue = req.GetProposalValue()
 	}
 
 	return &pb.AcceptReply{
-		MiniProposal: a.miniProposal,
+		MiniProposal: ins.miniProposal,
 	}, nil
 }
