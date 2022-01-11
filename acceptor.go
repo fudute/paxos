@@ -8,7 +8,7 @@ import (
 )
 
 type acceptor struct {
-	pb.UnimplementedPaxosServer
+	pb.UnimplementedAcceptorServer
 
 	ins sync.Map // key is index (int64), value is *Instance
 }
@@ -20,7 +20,7 @@ type Instance struct {
 	acceptedValue    string
 }
 
-func NewAcceptor() pb.PaxosServer {
+func NewAcceptor() pb.AcceptorServer {
 	return &acceptor{}
 }
 

@@ -5,6 +5,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 
 	pb "github.com/fudute/paxos/protoc"
 	grpc "google.golang.org/grpc"
@@ -17,37 +18,32 @@ type IDService interface {
 }
 
 type Proposer struct {
-	id                int
+	self              string
 	quorum            int
 	proposalGenerator IDService
-	acceptors         map[string]pb.PaxosClient
+	acceptors         map[string]pb.AcceptorClient
+	proposers         map[string]pb.ProposerClient
 
-	mu                 sync.Mutex
-	log                []*Slot
-	largestChosenIndex int64
+	mu               sync.Mutex
+	log              []string
+	smallestUnchosen int64
 
-	wg sync.WaitGroup
+	// leader 信息，在leader信息有效时间内，只会接受来自leader的prepare和accept请求
+	leader   string
+	expire   *time.Timer
+	interval time.Duration
+
+	pb.UnimplementedProposerServer
 }
 
-type SlotStatus int
-
-const (
-	Unused    SlotStatus = 0
-	Chooseing SlotStatus = 1
-	Chosen    SlotStatus = 2
-)
-
-type Slot struct {
-	status SlotStatus
-	value  string
-}
-
-func NewProposer(id, quorum int, value string, acceptors []string, generator IDService) *Proposer {
+func NewProposer(self string, quorum int, acceptors []string, proposers []string, generator IDService) *Proposer {
 	proposer := &Proposer{
-		id:                id,
+		self:              self,
 		quorum:            quorum,
-		acceptors:         make(map[string]pb.PaxosClient),
+		acceptors:         make(map[string]pb.AcceptorClient),
+		proposers:         make(map[string]pb.ProposerClient),
 		proposalGenerator: generator,
+		interval:          time.Second,
 	}
 	for _, acceptor := range acceptors {
 		cc, _ := grpc.Dial(acceptor,
@@ -56,56 +52,97 @@ func NewProposer(id, quorum int, value string, acceptors []string, generator IDS
 				Backoff: backoff.DefaultConfig,
 			}),
 		)
-		proposer.acceptors[acceptor] = pb.NewPaxosClient(cc)
+		proposer.acceptors[acceptor] = pb.NewAcceptorClient(cc)
 	}
+
+	for _, p := range proposers {
+		cc, _ := grpc.Dial(p,
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+			grpc.WithConnectParams(grpc.ConnectParams{
+				Backoff: backoff.DefaultConfig,
+			}),
+		)
+		proposer.proposers[p] = pb.NewProposerClient(cc)
+	}
+
 	return proposer
 }
 
 func (p *Proposer) String() string {
 	b := strings.Builder{}
 	for _, s := range p.log {
-		b.WriteString(s.value)
+		b.WriteString(s)
 		b.WriteByte(' ')
 	}
 	return b.String()
 }
 
-func (p *Proposer) Start(in <-chan string) {
-	defer p.wg.Wait()
-	for {
-		value, ok := <-in
-		if !ok {
-			log.Printf("[P%d] stopped, unable to read from input channel", p.id)
-			return
-		}
-
-		// 一直循环直到当前值被选定
-		p.wg.Add(1)
-		go func() {
-			defer p.wg.Done()
-			for {
-				chosen := p.chooseOne(value)
-				if value == chosen {
-					break
-				}
-			}
-		}()
+func (p *Proposer) LeaderExpired() bool {
+	if p.leader == "" {
+		return false
 	}
+	select {
+	case <-p.expire.C:
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *Proposer) Propose(ctx context.Context, req *pb.ProposeRequest) (*pb.ProposeReply, error) {
+	if p.leader != "" && p.leader != p.self && !p.LeaderExpired() {
+		reply, err := p.proposers[p.leader].Propose(ctx, req)
+		if err != nil {
+			log.Printf("[P%v] redirect request to leader %v failed", p.self, p.leader)
+		}
+		return reply, err
+	}
+	for {
+		chosen := p.chooseOne(req.ProposalValue)
+		if req.ProposalValue == chosen {
+			break
+		}
+	}
+	return &pb.ProposeReply{}, nil
+}
+
+func (p *Proposer) Learn(ctx context.Context, req *pb.LearnRequest) (*pb.LearnReply, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	index := req.Index
+	if index >= int64(len(p.log)) {
+		preAlloc := make([]string, index-int64(len(p.log))+1)
+		p.log = append(p.log, preAlloc...)
+	}
+
+	p.log[index] = req.ProposalValue
+
+	for p.smallestUnchosen < int64(len(p.log)) && p.log[p.smallestUnchosen] != "" {
+		p.smallestUnchosen++
+	}
+
+	if p.leader != req.Proposer {
+		log.Printf("[P%v] leader change from %v to %v", p.self, p.leader, req.Proposer)
+	}
+	p.leader = req.Proposer
+	if p.expire == nil {
+		p.expire = time.NewTimer(p.interval)
+	} else {
+		p.expire.Reset(p.interval)
+	}
+
+	return &pb.LearnReply{}, nil
 }
 
 func (p *Proposer) returnFirstUnChosen() int64 {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	for i := p.largestChosenIndex + 1; i < int64(len(p.log)); i++ {
-		if p.log[i].status == Unused {
-			return int64(i)
-		}
-	}
 
-	slot := new(Slot)
-	slot.status = Chooseing
-	p.log = append(p.log, slot)
-	return int64(len(p.log) - 1)
+	for p.smallestUnchosen < int64(len(p.log)) && p.log[p.smallestUnchosen] != "" {
+		p.smallestUnchosen++
+	}
+	return p.smallestUnchosen
 }
 
 func (p *Proposer) chooseOne(value string) (chosen string) {
@@ -135,12 +172,16 @@ func (p *Proposer) chooseOne(value string) (chosen string) {
 		}
 
 		if isChosen {
-			p.log[index].status = Chosen
-			p.log[index].value = value
-			if index > p.largestChosenIndex {
-				p.largestChosenIndex = index
-			}
-			log.Printf("[P%d] value at index %v is chosen: %v ", p.id, index, value)
+			log.Printf("[P%s] value at index %v is chosen: %v ", p.self, index, value)
+			go func() {
+				for _, proposer := range p.proposers {
+					proposer.Learn(context.Background(), &pb.LearnRequest{
+						Index:         index,
+						ProposalValue: value,
+						Proposer:      p.self,
+					})
+				}
+			}()
 			break
 		}
 	}
@@ -153,7 +194,7 @@ func (p *Proposer) broadcast(n int64, f func(n int64, addr string) interface{}) 
 	var wg sync.WaitGroup
 	for addr, acceptor := range p.acceptors {
 		wg.Add(1)
-		go func(addr string, acceptor pb.PaxosClient) {
+		go func(addr string, acceptor pb.AcceptorClient) {
 			defer wg.Done()
 			reply := f(n, addr)
 			if reply != nil {
@@ -176,7 +217,7 @@ func (p *Proposer) onPrepare(index, proposalNum int64, addr string) *pb.PrepareR
 			ProposalNum: proposalNum,
 		})
 		if err != nil {
-			log.Printf("[P%d] Prepare on acceptor %v failed %v", p.id, addr, err)
+			log.Printf("[P%s] Prepare on acceptor %v failed %v", p.self, addr, err)
 			return nil
 		}
 		return reply
@@ -192,7 +233,7 @@ func (p *Proposer) onAccept(index, proposalNum int64, addr string, value string)
 			ProposalValue: value,
 		})
 		if err != nil {
-			log.Printf("[P%d] Accept on acceptor %v failed %v", p.id, addr, err)
+			log.Printf("[P%s] Accept on acceptor %v failed %v", p.self, addr, err)
 			return nil
 		}
 		return reply

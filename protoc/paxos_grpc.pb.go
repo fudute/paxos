@@ -14,122 +14,244 @@ import (
 // Requires gRPC-Go v1.32.0 or later.
 const _ = grpc.SupportPackageIsVersion7
 
-// PaxosClient is the client API for Paxos service.
+// AcceptorClient is the client API for Acceptor service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
-type PaxosClient interface {
+type AcceptorClient interface {
 	Prepare(ctx context.Context, in *PrepareRequest, opts ...grpc.CallOption) (*PrepareReply, error)
 	Accept(ctx context.Context, in *AcceptRequest, opts ...grpc.CallOption) (*AcceptReply, error)
 }
 
-type paxosClient struct {
+type acceptorClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewPaxosClient(cc grpc.ClientConnInterface) PaxosClient {
-	return &paxosClient{cc}
+func NewAcceptorClient(cc grpc.ClientConnInterface) AcceptorClient {
+	return &acceptorClient{cc}
 }
 
-func (c *paxosClient) Prepare(ctx context.Context, in *PrepareRequest, opts ...grpc.CallOption) (*PrepareReply, error) {
+func (c *acceptorClient) Prepare(ctx context.Context, in *PrepareRequest, opts ...grpc.CallOption) (*PrepareReply, error) {
 	out := new(PrepareReply)
-	err := c.cc.Invoke(ctx, "/protoc.Paxos/Prepare", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/protoc.Acceptor/Prepare", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *paxosClient) Accept(ctx context.Context, in *AcceptRequest, opts ...grpc.CallOption) (*AcceptReply, error) {
+func (c *acceptorClient) Accept(ctx context.Context, in *AcceptRequest, opts ...grpc.CallOption) (*AcceptReply, error) {
 	out := new(AcceptReply)
-	err := c.cc.Invoke(ctx, "/protoc.Paxos/Accept", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/protoc.Acceptor/Accept", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// PaxosServer is the server API for Paxos service.
-// All implementations must embed UnimplementedPaxosServer
+// AcceptorServer is the server API for Acceptor service.
+// All implementations must embed UnimplementedAcceptorServer
 // for forward compatibility
-type PaxosServer interface {
+type AcceptorServer interface {
 	Prepare(context.Context, *PrepareRequest) (*PrepareReply, error)
 	Accept(context.Context, *AcceptRequest) (*AcceptReply, error)
-	mustEmbedUnimplementedPaxosServer()
+	mustEmbedUnimplementedAcceptorServer()
 }
 
-// UnimplementedPaxosServer must be embedded to have forward compatible implementations.
-type UnimplementedPaxosServer struct {
+// UnimplementedAcceptorServer must be embedded to have forward compatible implementations.
+type UnimplementedAcceptorServer struct {
 }
 
-func (UnimplementedPaxosServer) Prepare(context.Context, *PrepareRequest) (*PrepareReply, error) {
+func (UnimplementedAcceptorServer) Prepare(context.Context, *PrepareRequest) (*PrepareReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Prepare not implemented")
 }
-func (UnimplementedPaxosServer) Accept(context.Context, *AcceptRequest) (*AcceptReply, error) {
+func (UnimplementedAcceptorServer) Accept(context.Context, *AcceptRequest) (*AcceptReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Accept not implemented")
 }
-func (UnimplementedPaxosServer) mustEmbedUnimplementedPaxosServer() {}
+func (UnimplementedAcceptorServer) mustEmbedUnimplementedAcceptorServer() {}
 
-// UnsafePaxosServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to PaxosServer will
+// UnsafeAcceptorServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to AcceptorServer will
 // result in compilation errors.
-type UnsafePaxosServer interface {
-	mustEmbedUnimplementedPaxosServer()
+type UnsafeAcceptorServer interface {
+	mustEmbedUnimplementedAcceptorServer()
 }
 
-func RegisterPaxosServer(s grpc.ServiceRegistrar, srv PaxosServer) {
-	s.RegisterService(&Paxos_ServiceDesc, srv)
+func RegisterAcceptorServer(s grpc.ServiceRegistrar, srv AcceptorServer) {
+	s.RegisterService(&Acceptor_ServiceDesc, srv)
 }
 
-func _Paxos_Prepare_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Acceptor_Prepare_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(PrepareRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(PaxosServer).Prepare(ctx, in)
+		return srv.(AcceptorServer).Prepare(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/protoc.Paxos/Prepare",
+		FullMethod: "/protoc.Acceptor/Prepare",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(PaxosServer).Prepare(ctx, req.(*PrepareRequest))
+		return srv.(AcceptorServer).Prepare(ctx, req.(*PrepareRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Paxos_Accept_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Acceptor_Accept_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(AcceptRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(PaxosServer).Accept(ctx, in)
+		return srv.(AcceptorServer).Accept(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/protoc.Paxos/Accept",
+		FullMethod: "/protoc.Acceptor/Accept",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(PaxosServer).Accept(ctx, req.(*AcceptRequest))
+		return srv.(AcceptorServer).Accept(ctx, req.(*AcceptRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-// Paxos_ServiceDesc is the grpc.ServiceDesc for Paxos service.
+// Acceptor_ServiceDesc is the grpc.ServiceDesc for Acceptor service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var Paxos_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "protoc.Paxos",
-	HandlerType: (*PaxosServer)(nil),
+var Acceptor_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "protoc.Acceptor",
+	HandlerType: (*AcceptorServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
 			MethodName: "Prepare",
-			Handler:    _Paxos_Prepare_Handler,
+			Handler:    _Acceptor_Prepare_Handler,
 		},
 		{
 			MethodName: "Accept",
-			Handler:    _Paxos_Accept_Handler,
+			Handler:    _Acceptor_Accept_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "protoc/paxos.proto",
+}
+
+// ProposerClient is the client API for Proposer service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+type ProposerClient interface {
+	Propose(ctx context.Context, in *ProposeRequest, opts ...grpc.CallOption) (*ProposeReply, error)
+	Learn(ctx context.Context, in *LearnRequest, opts ...grpc.CallOption) (*LearnReply, error)
+}
+
+type proposerClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewProposerClient(cc grpc.ClientConnInterface) ProposerClient {
+	return &proposerClient{cc}
+}
+
+func (c *proposerClient) Propose(ctx context.Context, in *ProposeRequest, opts ...grpc.CallOption) (*ProposeReply, error) {
+	out := new(ProposeReply)
+	err := c.cc.Invoke(ctx, "/protoc.Proposer/Propose", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *proposerClient) Learn(ctx context.Context, in *LearnRequest, opts ...grpc.CallOption) (*LearnReply, error) {
+	out := new(LearnReply)
+	err := c.cc.Invoke(ctx, "/protoc.Proposer/Learn", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ProposerServer is the server API for Proposer service.
+// All implementations must embed UnimplementedProposerServer
+// for forward compatibility
+type ProposerServer interface {
+	Propose(context.Context, *ProposeRequest) (*ProposeReply, error)
+	Learn(context.Context, *LearnRequest) (*LearnReply, error)
+	mustEmbedUnimplementedProposerServer()
+}
+
+// UnimplementedProposerServer must be embedded to have forward compatible implementations.
+type UnimplementedProposerServer struct {
+}
+
+func (UnimplementedProposerServer) Propose(context.Context, *ProposeRequest) (*ProposeReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Propose not implemented")
+}
+func (UnimplementedProposerServer) Learn(context.Context, *LearnRequest) (*LearnReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Learn not implemented")
+}
+func (UnimplementedProposerServer) mustEmbedUnimplementedProposerServer() {}
+
+// UnsafeProposerServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to ProposerServer will
+// result in compilation errors.
+type UnsafeProposerServer interface {
+	mustEmbedUnimplementedProposerServer()
+}
+
+func RegisterProposerServer(s grpc.ServiceRegistrar, srv ProposerServer) {
+	s.RegisterService(&Proposer_ServiceDesc, srv)
+}
+
+func _Proposer_Propose_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ProposeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProposerServer).Propose(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/protoc.Proposer/Propose",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProposerServer).Propose(ctx, req.(*ProposeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Proposer_Learn_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LearnRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProposerServer).Learn(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/protoc.Proposer/Learn",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProposerServer).Learn(ctx, req.(*LearnRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// Proposer_ServiceDesc is the grpc.ServiceDesc for Proposer service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var Proposer_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "protoc.Proposer",
+	HandlerType: (*ProposerServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "Propose",
+			Handler:    _Proposer_Propose_Handler,
+		},
+		{
+			MethodName: "Learn",
+			Handler:    _Proposer_Learn_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

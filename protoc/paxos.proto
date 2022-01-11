@@ -4,9 +4,14 @@ option go_package="github.com/fudute/paxos/protoc";
 
 package protoc;
 
-service Paxos {
+service Acceptor {
     rpc Prepare (PrepareRequest) returns (PrepareReply) {}
     rpc Accept (AcceptRequest) returns (AcceptReply) {}
+}
+
+service Proposer {
+    rpc Propose(ProposeRequest) returns (ProposeReply) {}
+    rpc Learn(LearnRequest) returns (LearnReply) {}
 }
 
 message PrepareRequest {
@@ -27,3 +32,16 @@ message AcceptReply {
     int64 MiniProposal = 1;
 }
 
+message LearnRequest {
+    int64 Index = 1;
+    string ProposalValue = 2;
+    string Proposer = 3;
+}
+message LearnReply {
+}
+
+message ProposeRequest {
+    string ProposalValue = 1;
+}
+message ProposeReply {
+}
