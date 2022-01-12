@@ -11,6 +11,8 @@ type acceptor struct {
 	pb.UnimplementedAcceptorServer
 
 	ins sync.Map // key is index (int64), value is *Instance
+
+	largestAccepted int64
 }
 
 type Instance struct {

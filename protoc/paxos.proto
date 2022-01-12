@@ -14,6 +14,10 @@ service Proposer {
     rpc Learn(LearnRequest) returns (LearnReply) {}
 }
 
+/* service Leaner { */
+/*     // rpc ReadFrom() */
+/* } */
+
 message PrepareRequest {
     int64 Index = 1;
     int64 ProposalNum = 2;
@@ -21,6 +25,7 @@ message PrepareRequest {
 message PrepareReply {
     int64 AcceptedProposal = 1;
     string AcceptedValue = 2;
+    bool NoMoreAccepted = 3;
 }
 
 message AcceptRequest {

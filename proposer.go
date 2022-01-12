@@ -112,8 +112,7 @@ func (p *Proposer) Learn(ctx context.Context, req *pb.LearnRequest) (*pb.LearnRe
 
 	index := req.Index
 	if index >= int64(len(p.log)) {
-		preAlloc := make([]string, index-int64(len(p.log))+1)
-		p.log = append(p.log, preAlloc...)
+		p.log = append(p.log, make([]string, len(p.log)+1)...)
 	}
 
 	p.log[index] = req.ProposalValue
