@@ -11,16 +11,16 @@ service Acceptor {
 
 service Proposer {
     rpc Propose(ProposeRequest) returns (ProposeReply) {}
-    rpc Learn(LearnRequest) returns (LearnReply) {}
 }
 
-/* service Leaner { */
-/*     // rpc ReadFrom() */
-/* } */
+service Leaner {
+    rpc Learn(LearnRequest) returns (LearnReply) {}
+}
 
 message PrepareRequest {
     int64 Index = 1;
     int64 ProposalNum = 2;
+    string Topic = 3;
 }
 message PrepareReply {
     int64 AcceptedProposal = 1;
@@ -32,6 +32,7 @@ message AcceptRequest {
     int64 Index = 1;
     int64 ProposalNum = 2;
     string ProposalValue = 3;
+    string Topic = 4;
 }
 message AcceptReply {
     int64 MiniProposal = 1;
@@ -41,6 +42,7 @@ message LearnRequest {
     int64 Index = 1;
     string ProposalValue = 2;
     string Proposer = 3;
+    string Topic = 4;
 }
 message LearnReply {
 }

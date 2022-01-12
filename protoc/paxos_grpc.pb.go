@@ -141,7 +141,6 @@ var Acceptor_ServiceDesc = grpc.ServiceDesc{
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type ProposerClient interface {
 	Propose(ctx context.Context, in *ProposeRequest, opts ...grpc.CallOption) (*ProposeReply, error)
-	Learn(ctx context.Context, in *LearnRequest, opts ...grpc.CallOption) (*LearnReply, error)
 }
 
 type proposerClient struct {
@@ -161,21 +160,11 @@ func (c *proposerClient) Propose(ctx context.Context, in *ProposeRequest, opts .
 	return out, nil
 }
 
-func (c *proposerClient) Learn(ctx context.Context, in *LearnRequest, opts ...grpc.CallOption) (*LearnReply, error) {
-	out := new(LearnReply)
-	err := c.cc.Invoke(ctx, "/protoc.Proposer/Learn", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // ProposerServer is the server API for Proposer service.
 // All implementations must embed UnimplementedProposerServer
 // for forward compatibility
 type ProposerServer interface {
 	Propose(context.Context, *ProposeRequest) (*ProposeReply, error)
-	Learn(context.Context, *LearnRequest) (*LearnReply, error)
 	mustEmbedUnimplementedProposerServer()
 }
 
@@ -185,9 +174,6 @@ type UnimplementedProposerServer struct {
 
 func (UnimplementedProposerServer) Propose(context.Context, *ProposeRequest) (*ProposeReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Propose not implemented")
-}
-func (UnimplementedProposerServer) Learn(context.Context, *LearnRequest) (*LearnReply, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Learn not implemented")
 }
 func (UnimplementedProposerServer) mustEmbedUnimplementedProposerServer() {}
 
@@ -220,24 +206,6 @@ func _Proposer_Propose_Handler(srv interface{}, ctx context.Context, dec func(in
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Proposer_Learn_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(LearnRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(ProposerServer).Learn(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/protoc.Proposer/Learn",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ProposerServer).Learn(ctx, req.(*LearnRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 // Proposer_ServiceDesc is the grpc.ServiceDesc for Proposer service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -249,9 +217,91 @@ var Proposer_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "Propose",
 			Handler:    _Proposer_Propose_Handler,
 		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "protoc/paxos.proto",
+}
+
+// LeanerClient is the client API for Leaner service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+type LeanerClient interface {
+	Learn(ctx context.Context, in *LearnRequest, opts ...grpc.CallOption) (*LearnReply, error)
+}
+
+type leanerClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewLeanerClient(cc grpc.ClientConnInterface) LeanerClient {
+	return &leanerClient{cc}
+}
+
+func (c *leanerClient) Learn(ctx context.Context, in *LearnRequest, opts ...grpc.CallOption) (*LearnReply, error) {
+	out := new(LearnReply)
+	err := c.cc.Invoke(ctx, "/protoc.Leaner/Learn", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// LeanerServer is the server API for Leaner service.
+// All implementations must embed UnimplementedLeanerServer
+// for forward compatibility
+type LeanerServer interface {
+	Learn(context.Context, *LearnRequest) (*LearnReply, error)
+	mustEmbedUnimplementedLeanerServer()
+}
+
+// UnimplementedLeanerServer must be embedded to have forward compatible implementations.
+type UnimplementedLeanerServer struct {
+}
+
+func (UnimplementedLeanerServer) Learn(context.Context, *LearnRequest) (*LearnReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Learn not implemented")
+}
+func (UnimplementedLeanerServer) mustEmbedUnimplementedLeanerServer() {}
+
+// UnsafeLeanerServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to LeanerServer will
+// result in compilation errors.
+type UnsafeLeanerServer interface {
+	mustEmbedUnimplementedLeanerServer()
+}
+
+func RegisterLeanerServer(s grpc.ServiceRegistrar, srv LeanerServer) {
+	s.RegisterService(&Leaner_ServiceDesc, srv)
+}
+
+func _Leaner_Learn_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LearnRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LeanerServer).Learn(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/protoc.Leaner/Learn",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LeanerServer).Learn(ctx, req.(*LearnRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// Leaner_ServiceDesc is the grpc.ServiceDesc for Leaner service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var Leaner_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "protoc.Leaner",
+	HandlerType: (*LeanerServer)(nil),
+	Methods: []grpc.MethodDesc{
 		{
 			MethodName: "Learn",
-			Handler:    _Proposer_Learn_Handler,
+			Handler:    _Leaner_Learn_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

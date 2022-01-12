@@ -21,8 +21,10 @@ type Proposer struct {
 	self              string
 	quorum            int
 	proposalGenerator IDService
-	acceptors         map[string]pb.AcceptorClient
-	proposers         map[string]pb.ProposerClient
+	acceptors         []string
+	acceptorsClient   map[string]pb.AcceptorClient
+	proposers         []string
+	proposersClient   map[string]pb.ProposerClient
 
 	mu               sync.Mutex
 	log              []string
@@ -40,8 +42,10 @@ func NewProposer(self string, quorum int, acceptors []string, proposers []string
 	proposer := &Proposer{
 		self:              self,
 		quorum:            quorum,
-		acceptors:         make(map[string]pb.AcceptorClient),
-		proposers:         make(map[string]pb.ProposerClient),
+		acceptors:         acceptors,
+		proposers:         proposers,
+		acceptorsClient:   make(map[string]pb.AcceptorClient),
+		proposersClient:   make(map[string]pb.ProposerClient),
 		proposalGenerator: generator,
 		interval:          time.Second,
 	}
@@ -52,7 +56,7 @@ func NewProposer(self string, quorum int, acceptors []string, proposers []string
 				Backoff: backoff.DefaultConfig,
 			}),
 		)
-		proposer.acceptors[acceptor] = pb.NewAcceptorClient(cc)
+		proposer.acceptorsClient[acceptor] = pb.NewAcceptorClient(cc)
 	}
 
 	for _, p := range proposers {
@@ -62,7 +66,7 @@ func NewProposer(self string, quorum int, acceptors []string, proposers []string
 				Backoff: backoff.DefaultConfig,
 			}),
 		)
-		proposer.proposers[p] = pb.NewProposerClient(cc)
+		proposer.proposersClient[p] = pb.NewProposerClient(cc)
 	}
 
 	return proposer
@@ -79,7 +83,7 @@ func (p *Proposer) String() string {
 
 func (p *Proposer) LeaderExpired() bool {
 	if p.leader == "" {
-		return false
+		return true
 	}
 	select {
 	case <-p.expire.C:
@@ -90,12 +94,8 @@ func (p *Proposer) LeaderExpired() bool {
 }
 
 func (p *Proposer) Propose(ctx context.Context, req *pb.ProposeRequest) (*pb.ProposeReply, error) {
-	if p.leader != "" && p.leader != p.self && !p.LeaderExpired() {
-		reply, err := p.proposers[p.leader].Propose(ctx, req)
-		if err != nil {
-			log.Printf("[P%v] redirect request to leader %v failed", p.self, p.leader)
-		}
-		return reply, err
+	if p.leader != p.self && !p.LeaderExpired() {
+		return p.proposersClient[p.leader].Propose(ctx, req)
 	}
 	for {
 		chosen := p.chooseOne(req.ProposalValue)
@@ -148,7 +148,7 @@ func (p *Proposer) chooseOne(value string) (chosen string) {
 	index := p.returnFirstUnChosen()
 	for {
 		proposalNum := p.proposalGenerator.Next()
-		prepareReplys := p.broadcast(proposalNum, func(n int64, addr string) interface{} { return p.onPrepare(index, n, addr) })
+		prepareReplys := p.broadcast(p.acceptors, func(addr string) interface{} { return p.onPrepare(index, proposalNum, addr) })
 
 		var mini int64
 		for i := 0; i <= p.quorum; i++ {
@@ -159,7 +159,7 @@ func (p *Proposer) chooseOne(value string) (chosen string) {
 			}
 		}
 
-		acceptReplys := p.broadcast(proposalNum, func(n int64, addr string) interface{} { return p.onAccept(index, n, addr, value) })
+		acceptReplys := p.broadcast(p.acceptors, func(addr string) interface{} { return p.onAccept(index, proposalNum, addr, value) })
 
 		isChosen := true
 		for i := 0; i <= p.quorum; i++ {
@@ -172,34 +172,34 @@ func (p *Proposer) chooseOne(value string) (chosen string) {
 
 		if isChosen {
 			log.Printf("[P%s] value at index %v is chosen: %v ", p.self, index, value)
-			go func() {
-				for _, proposer := range p.proposers {
-					proposer.Learn(context.Background(), &pb.LearnRequest{
-						Index:         index,
-						ProposalValue: value,
-						Proposer:      p.self,
-					})
-				}
-			}()
+			// go func() {
+			// 	for _, proposer := range p.proposers {
+			// 		proposer.Learn(context.Background(), &pb.LearnRequest{
+			// 			Index:         index,
+			// 			ProposalValue: value,
+			// 			Proposer:      p.self,
+			// 		})
+			// 	}
+			// }()
 			break
 		}
 	}
 	return value
 }
 
-func (p *Proposer) broadcast(n int64, f func(n int64, addr string) interface{}) <-chan interface{} {
+func (p *Proposer) broadcast(addrs []string, f func(addr string) interface{}) <-chan interface{} {
 	out := make(chan interface{})
 
 	var wg sync.WaitGroup
-	for addr, acceptor := range p.acceptors {
+	for _, addr := range addrs {
 		wg.Add(1)
-		go func(addr string, acceptor pb.AcceptorClient) {
+		go func(addr string) {
 			defer wg.Done()
-			reply := f(n, addr)
+			reply := f(addr)
 			if reply != nil {
 				out <- reply
 			}
-		}(addr, acceptor)
+		}(addr)
 	}
 
 	go func() {
@@ -210,7 +210,7 @@ func (p *Proposer) broadcast(n int64, f func(n int64, addr string) interface{}) 
 }
 
 func (p *Proposer) onPrepare(index, proposalNum int64, addr string) *pb.PrepareReply {
-	if cli, ok := p.acceptors[addr]; ok {
+	if cli, ok := p.acceptorsClient[addr]; ok {
 		reply, err := cli.Prepare(context.Background(), &pb.PrepareRequest{
 			Index:       index,
 			ProposalNum: proposalNum,
@@ -225,7 +225,7 @@ func (p *Proposer) onPrepare(index, proposalNum int64, addr string) *pb.PrepareR
 }
 
 func (p *Proposer) onAccept(index, proposalNum int64, addr string, value string) *pb.AcceptReply {
-	if cli, ok := p.acceptors[addr]; ok {
+	if cli, ok := p.acceptorsClient[addr]; ok {
 		reply, err := cli.Accept(context.Background(), &pb.AcceptRequest{
 			Index:         index,
 			ProposalNum:   proposalNum,
