@@ -1,7 +1,6 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"log"
 	"net"
@@ -9,6 +8,7 @@ import (
 	"sync/atomic"
 
 	"github.com/fudute/paxos"
+	"github.com/fudute/paxos/config"
 	pb "github.com/fudute/paxos/protoc"
 	"google.golang.org/grpc"
 )
@@ -27,7 +27,11 @@ func (u *UUID) Next() int64 {
 
 func main() {
 	log.SetFlags(0)
-	flag.Parse()
+
+	conf, err := config.LoadConfig()
+	if err != nil {
+		log.Fatal("unable to load config")
+	}
 
 	var portStart = 8888
 	var nProposer, nAcceptor = 2, 5
@@ -43,63 +47,41 @@ func main() {
 	}
 
 	var wg sync.WaitGroup
-	for _, acceptor := range acceptorsAddr {
+	for _, acceptor := range conf.Cluster.Acceptors {
 		wg.Add(1)
-		go func(acceptor string) {
+		go func(addr string) {
 			defer wg.Done()
 			s := grpc.NewServer()
 			s.RegisterService(&pb.Acceptor_ServiceDesc, paxos.NewAcceptor())
-			lis, err := net.Listen("tcp", acceptor)
+			lis, err := net.Listen("tcp", addr)
 			if err != nil {
 				log.Fatal("listen failed", err)
 			}
-			log.Println("acceptor listen at ", acceptor)
+			log.Println("acceptor listen at ", addr)
 			log.Fatal(s.Serve(lis))
-		}(acceptor)
+		}(acceptor.Addr)
 	}
 
 	idService := NewUUIDService()
 
 	var proposers []*paxos.Proposer
 
-	for _, proposerAddr := range proposersAddr {
+	for _, proposer := range conf.Cluster.Proposers {
 		wg.Add(1)
-		go func(proposerAddr string) {
+		go func(addr string) {
 			defer wg.Done()
 			s := grpc.NewServer()
-			proposer := paxos.NewProposer(proposerAddr, quorum, acceptorsAddr, proposersAddr, idService)
+			proposer := paxos.NewProposer(addr, quorum, &conf.Cluster, idService)
 			proposers = append(proposers, proposer)
 			s.RegisterService(&pb.Proposer_ServiceDesc, proposer)
-			lis, err := net.Listen("tcp", proposerAddr)
+			lis, err := net.Listen("tcp", addr)
 			if err != nil {
 				log.Fatal("listen failed", err)
 			}
-			log.Println("proposer listen at ", proposerAddr)
+			log.Println("proposer listen at ", addr)
 			log.Fatal(s.Serve(lis))
-		}(proposerAddr)
+		}(proposer.Addr)
 	}
 
-	// in := make(chan string, 3)
-	// go func() {
-	// 	defer close(in)
-	// 	for i := 0; i < 10; i++ {
-	// 		<-time.After(time.Second / 100)
-	// 		in <- fmt.Sprint(i)
-	// 	}
-	// }()
-
-	// var wg sync.WaitGroup
-	// for _, p := range proposers {
-	// 	wg.Add(1)
-	// 	go func(p *paxos.Proposer) {
-	// 		defer wg.Done()
-	// 		p.Start(in)
-	// 	}(p)
-	// }
-	// wg.Wait()
-
-	// for _, p := range proposers {
-	// 	fmt.Println(p.String())
-	// }
 	wg.Wait()
 }

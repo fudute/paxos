@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fudute/paxos/config"
 	pb "github.com/fudute/paxos/protoc"
 	grpc "google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -21,9 +22,9 @@ type Proposer struct {
 	self              string
 	quorum            int
 	proposalGenerator IDService
-	acceptors         []string
+	acceptors         []*config.Node
 	acceptorsClient   map[string]pb.AcceptorClient
-	proposers         []string
+	proposers         []*config.Node
 	proposersClient   map[string]pb.ProposerClient
 
 	mu               sync.Mutex
@@ -36,37 +37,38 @@ type Proposer struct {
 	interval time.Duration
 
 	pb.UnimplementedProposerServer
+	pb.UnimplementedLeanerServer
 }
 
-func NewProposer(self string, quorum int, acceptors []string, proposers []string, generator IDService) *Proposer {
+func NewProposer(self string, quorum int, cluster *config.Cluster, generator IDService) *Proposer {
 	proposer := &Proposer{
 		self:              self,
 		quorum:            quorum,
-		acceptors:         acceptors,
-		proposers:         proposers,
+		acceptors:         cluster.Acceptors,
+		proposers:         cluster.Proposers,
 		acceptorsClient:   make(map[string]pb.AcceptorClient),
 		proposersClient:   make(map[string]pb.ProposerClient),
 		proposalGenerator: generator,
 		interval:          time.Second,
 	}
-	for _, acceptor := range acceptors {
-		cc, _ := grpc.Dial(acceptor,
+	for _, acceptor := range cluster.Acceptors {
+		cc, _ := grpc.Dial(acceptor.Addr,
 			grpc.WithTransportCredentials(insecure.NewCredentials()),
 			grpc.WithConnectParams(grpc.ConnectParams{
 				Backoff: backoff.DefaultConfig,
 			}),
 		)
-		proposer.acceptorsClient[acceptor] = pb.NewAcceptorClient(cc)
+		proposer.acceptorsClient[acceptor.Addr] = pb.NewAcceptorClient(cc)
 	}
 
-	for _, p := range proposers {
-		cc, _ := grpc.Dial(p,
+	for _, p := range cluster.Proposers {
+		cc, _ := grpc.Dial(p.Addr,
 			grpc.WithTransportCredentials(insecure.NewCredentials()),
 			grpc.WithConnectParams(grpc.ConnectParams{
 				Backoff: backoff.DefaultConfig,
 			}),
 		)
-		proposer.proposersClient[p] = pb.NewProposerClient(cc)
+		proposer.proposersClient[p.Addr] = pb.NewProposerClient(cc)
 	}
 
 	return proposer
@@ -148,7 +150,7 @@ func (p *Proposer) chooseOne(value string) (chosen string) {
 	index := p.returnFirstUnChosen()
 	for {
 		proposalNum := p.proposalGenerator.Next()
-		prepareReplys := p.broadcast(p.acceptors, func(addr string) interface{} { return p.onPrepare(index, proposalNum, addr) })
+		prepareReplys := p.broadcast(p.acceptors, func(node *config.Node) interface{} { return p.onPrepare(index, proposalNum, node.Addr) })
 
 		var mini int64
 		for i := 0; i <= p.quorum; i++ {
@@ -159,7 +161,7 @@ func (p *Proposer) chooseOne(value string) (chosen string) {
 			}
 		}
 
-		acceptReplys := p.broadcast(p.acceptors, func(addr string) interface{} { return p.onAccept(index, proposalNum, addr, value) })
+		acceptReplys := p.broadcast(p.acceptors, func(node *config.Node) interface{} { return p.onAccept(index, proposalNum, node.Addr, value) })
 
 		isChosen := true
 		for i := 0; i <= p.quorum; i++ {
@@ -172,6 +174,7 @@ func (p *Proposer) chooseOne(value string) (chosen string) {
 
 		if isChosen {
 			log.Printf("[P%s] value at index %v is chosen: %v ", p.self, index, value)
+			p.log[index] = value
 			// go func() {
 			// 	for _, proposer := range p.proposers {
 			// 		proposer.Learn(context.Background(), &pb.LearnRequest{
@@ -187,19 +190,19 @@ func (p *Proposer) chooseOne(value string) (chosen string) {
 	return value
 }
 
-func (p *Proposer) broadcast(addrs []string, f func(addr string) interface{}) <-chan interface{} {
+func (p *Proposer) broadcast(nodes []*config.Node, f func(node *config.Node) interface{}) <-chan interface{} {
 	out := make(chan interface{})
 
 	var wg sync.WaitGroup
-	for _, addr := range addrs {
+	for _, node := range nodes {
 		wg.Add(1)
-		go func(addr string) {
+		go func(node *config.Node) {
 			defer wg.Done()
-			reply := f(addr)
+			reply := f(node)
 			if reply != nil {
 				out <- reply
 			}
-		}(addr)
+		}(node)
 	}
 
 	go func() {
