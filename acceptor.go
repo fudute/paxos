@@ -41,6 +41,7 @@ func (a *acceptor) Prepare(ctx context.Context, req *pb.PrepareRequest) (*pb.Pre
 	return &pb.PrepareReply{
 		AcceptedProposal: ins.acceptedProposal,
 		AcceptedValue:    ins.acceptedValue,
+		NoMoreAccepted:   a.largestAccepted < req.Index,
 	}, nil
 }
 
@@ -55,6 +56,9 @@ func (a *acceptor) Accept(ctx context.Context, req *pb.AcceptRequest) (*pb.Accep
 		ins.miniProposal = req.GetProposalNum()
 		ins.acceptedProposal = ins.miniProposal
 		ins.acceptedValue = req.GetProposalValue()
+		if a.largestAccepted < req.Index {
+			a.largestAccepted = req.Index
+		}
 	}
 
 	return &pb.AcceptReply{
