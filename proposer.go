@@ -3,15 +3,11 @@ package paxos
 import (
 	"context"
 	"log"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/fudute/paxos/config"
 	pb "github.com/fudute/paxos/protoc"
-	grpc "google.golang.org/grpc"
-	"google.golang.org/grpc/backoff"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 type IDService interface {
@@ -22,13 +18,11 @@ type Proposer struct {
 	self              string
 	quorum            int
 	proposalGenerator IDService
-	acceptors         []*config.Node
-	acceptorsClient   map[string]pb.AcceptorClient
-	proposers         []*config.Node
-	proposersClient   map[string]pb.ProposerClient
+	cluster           *config.Cluster
+	conns             *ConnectionsManager
 
 	mu               sync.Mutex
-	log              []string
+	log              []slot
 	smallestUnchosen int64
 
 	// leader 信息，在leader信息有效时间内，只会接受来自leader的prepare和accept请求
@@ -37,50 +31,32 @@ type Proposer struct {
 	interval time.Duration
 
 	pb.UnimplementedProposerServer
-	pb.UnimplementedLeanerServer
+	pb.UnimplementedLearnerServer
+}
+
+type status int
+
+const (
+	idle    status = 0
+	running status = 1
+	chosen  status = 2
+)
+
+type slot struct {
+	value  string
+	status status
 }
 
 func NewProposer(self string, quorum int, cluster *config.Cluster, generator IDService) *Proposer {
 	proposer := &Proposer{
 		self:              self,
 		quorum:            quorum,
-		acceptors:         cluster.Acceptors,
-		proposers:         cluster.Proposers,
-		acceptorsClient:   make(map[string]pb.AcceptorClient),
-		proposersClient:   make(map[string]pb.ProposerClient),
 		proposalGenerator: generator,
 		interval:          time.Second,
+		cluster:           cluster,
+		conns:             NewConnectionsManager(),
 	}
-	for _, acceptor := range cluster.Acceptors {
-		cc, _ := grpc.Dial(acceptor.Addr,
-			grpc.WithTransportCredentials(insecure.NewCredentials()),
-			grpc.WithConnectParams(grpc.ConnectParams{
-				Backoff: backoff.DefaultConfig,
-			}),
-		)
-		proposer.acceptorsClient[acceptor.Addr] = pb.NewAcceptorClient(cc)
-	}
-
-	for _, p := range cluster.Proposers {
-		cc, _ := grpc.Dial(p.Addr,
-			grpc.WithTransportCredentials(insecure.NewCredentials()),
-			grpc.WithConnectParams(grpc.ConnectParams{
-				Backoff: backoff.DefaultConfig,
-			}),
-		)
-		proposer.proposersClient[p.Addr] = pb.NewProposerClient(cc)
-	}
-
 	return proposer
-}
-
-func (p *Proposer) String() string {
-	b := strings.Builder{}
-	for _, s := range p.log {
-		b.WriteString(s)
-		b.WriteByte(' ')
-	}
-	return b.String()
 }
 
 func (p *Proposer) LeaderExpired() bool {
@@ -97,7 +73,10 @@ func (p *Proposer) LeaderExpired() bool {
 
 func (p *Proposer) Propose(ctx context.Context, req *pb.ProposeRequest) (*pb.ProposeReply, error) {
 	if p.leader != p.self && !p.LeaderExpired() {
-		return p.proposersClient[p.leader].Propose(ctx, req)
+		cli, err := p.conns.Proposer(p.leader)
+		if err == nil {
+			return cli.Propose(ctx, req)
+		}
 	}
 	for {
 		chosen := p.chooseOne(req.ProposalValue)
@@ -114,12 +93,13 @@ func (p *Proposer) Learn(ctx context.Context, req *pb.LearnRequest) (*pb.LearnRe
 
 	index := req.Index
 	if index >= int64(len(p.log)) {
-		p.log = append(p.log, make([]string, len(p.log)+1)...)
+		p.log = append(p.log, make([]slot, len(p.log)+1)...)
 	}
 
-	p.log[index] = req.ProposalValue
+	p.log[index].value = req.ProposalValue
+	p.log[index].status = chosen
 
-	for p.smallestUnchosen < int64(len(p.log)) && p.log[p.smallestUnchosen] != "" {
+	for p.smallestUnchosen < int64(len(p.log)) && p.log[p.smallestUnchosen].status == chosen {
 		p.smallestUnchosen++
 	}
 
@@ -136,21 +116,28 @@ func (p *Proposer) Learn(ctx context.Context, req *pb.LearnRequest) (*pb.LearnRe
 	return &pb.LearnReply{}, nil
 }
 
-func (p *Proposer) returnFirstUnChosen() int64 {
+func (p *Proposer) pickSlot() int64 {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	for p.smallestUnchosen < int64(len(p.log)) && p.log[p.smallestUnchosen] != "" {
-		p.smallestUnchosen++
+	index := p.smallestUnchosen
+
+	for index < int64(len(p.log)) && p.log[index].status != idle {
+		index++
 	}
-	return p.smallestUnchosen
+
+	if index == int64(len(p.log)) {
+		p.log = append(p.log, slot{})
+	}
+	p.log[index].status = running
+	return index
 }
 
 func (p *Proposer) chooseOne(value string) (chosen string) {
-	index := p.returnFirstUnChosen()
+	index := p.pickSlot()
 	for {
 		proposalNum := p.proposalGenerator.Next()
-		prepareReplys := p.broadcast(p.acceptors, func(node *config.Node) interface{} { return p.onPrepare(index, proposalNum, node.Addr) })
+		prepareReplys := p.broadcast(p.cluster.Acceptors, func(node *config.Node) interface{} { return p.onPrepare(index, proposalNum, node) })
 
 		var mini int64
 		for i := 0; i <= p.quorum; i++ {
@@ -161,7 +148,7 @@ func (p *Proposer) chooseOne(value string) (chosen string) {
 			}
 		}
 
-		acceptReplys := p.broadcast(p.acceptors, func(node *config.Node) interface{} { return p.onAccept(index, proposalNum, node.Addr, value) })
+		acceptReplys := p.broadcast(p.cluster.Acceptors, func(node *config.Node) interface{} { return p.onAccept(index, proposalNum, value, node) })
 
 		isChosen := true
 		for i := 0; i <= p.quorum; i++ {
@@ -174,16 +161,9 @@ func (p *Proposer) chooseOne(value string) (chosen string) {
 
 		if isChosen {
 			log.Printf("[P%s] value at index %v is chosen: %v ", p.self, index, value)
-			p.log[index] = value
-			// go func() {
-			// 	for _, proposer := range p.proposers {
-			// 		proposer.Learn(context.Background(), &pb.LearnRequest{
-			// 			Index:         index,
-			// 			ProposalValue: value,
-			// 			Proposer:      p.self,
-			// 		})
-			// 	}
-			// }()
+			p.broadcast(p.cluster.Learners, func(node *config.Node) interface{} {
+				return p.OnLearn(index, value, node)
+			})
 			break
 		}
 	}
@@ -212,33 +192,52 @@ func (p *Proposer) broadcast(nodes []*config.Node, f func(node *config.Node) int
 	return out
 }
 
-func (p *Proposer) onPrepare(index, proposalNum int64, addr string) *pb.PrepareReply {
-	if cli, ok := p.acceptorsClient[addr]; ok {
-		reply, err := cli.Prepare(context.Background(), &pb.PrepareRequest{
-			Index:       index,
-			ProposalNum: proposalNum,
-		})
-		if err != nil {
-			log.Printf("[P%s] Prepare on acceptor %v failed %v", p.self, addr, err)
-			return nil
-		}
-		return reply
+func (p *Proposer) onPrepare(index, proposalNum int64, node *config.Node) *pb.PrepareReply {
+	cli, err := p.conns.Acceptor(node.Addr)
+	if err != nil {
+		return nil
 	}
-	return nil
+	reply, err := cli.Prepare(context.Background(), &pb.PrepareRequest{
+		Index:       index,
+		ProposalNum: proposalNum,
+	})
+	if err != nil {
+		log.Printf("[P%s] Prepare on acceptor %v failed %v", p.self, node.Addr, err)
+		return nil
+	}
+	return reply
 }
 
-func (p *Proposer) onAccept(index, proposalNum int64, addr string, value string) *pb.AcceptReply {
-	if cli, ok := p.acceptorsClient[addr]; ok {
-		reply, err := cli.Accept(context.Background(), &pb.AcceptRequest{
-			Index:         index,
-			ProposalNum:   proposalNum,
-			ProposalValue: value,
-		})
-		if err != nil {
-			log.Printf("[P%s] Accept on acceptor %v failed %v", p.self, addr, err)
-			return nil
-		}
-		return reply
+func (p *Proposer) onAccept(index, proposalNum int64, value string, node *config.Node) *pb.AcceptReply {
+	cli, err := p.conns.Acceptor(node.Addr)
+	if err != nil {
+		return nil
 	}
-	return nil
+	reply, err := cli.Accept(context.Background(), &pb.AcceptRequest{
+		Index:         index,
+		ProposalNum:   proposalNum,
+		ProposalValue: value,
+	})
+	if err != nil {
+		log.Printf("[P%s] Accept on acceptor %v failed %v", p.self, node.Addr, err)
+		return nil
+	}
+	return reply
+}
+
+func (p *Proposer) OnLearn(index int64, value string, node *config.Node) *pb.LearnReply {
+	cli, err := p.conns.Learner(node.Addr)
+	if err != nil {
+		return nil
+	}
+	reply, err := cli.Learn(context.Background(), &pb.LearnRequest{
+		Index:         index,
+		Proposer:      p.self,
+		ProposalValue: value,
+	})
+	if err != nil {
+		log.Printf("[P%s] Learn on learner %v failed %v", p.self, node.Addr, err)
+		return nil
+	}
+	return reply
 }

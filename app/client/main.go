@@ -10,13 +10,15 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+var N = 100000
+
 func main() {
-	cc1, err := grpc.Dial(":8893", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	cc1, err := grpc.Dial(":9000", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	cc2, err := grpc.Dial(":8894", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	cc2, err := grpc.Dial(":9001", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -24,7 +26,7 @@ func main() {
 	ch := make(chan string)
 
 	go func() {
-		for i := 0; i < 100; i++ {
+		for i := 0; i < N; i++ {
 			ch <- fmt.Sprint(i)
 		}
 		close(ch)
@@ -33,6 +35,7 @@ func main() {
 	go send(protoc.NewProposerClient(cc1), ch)
 	go send(protoc.NewProposerClient(cc2), ch)
 
+	fmt.Println("done")
 	fmt.Scan(new(byte))
 }
 

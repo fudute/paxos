@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"net"
 	"sync"
@@ -30,21 +29,13 @@ func main() {
 
 	conf, err := config.LoadConfig()
 	if err != nil {
-		log.Fatal("unable to load config")
+		log.Fatal("unable to load config: ", err)
 	}
 
-	var portStart = 8888
-	var nProposer, nAcceptor = 2, 5
+	log.Printf("load config: %#v", conf)
+	var nAcceptor = len(conf.Cluster.Acceptors)
 
 	var quorum = (nAcceptor + 1) / 2
-
-	var acceptorsAddr, proposersAddr []string
-	for i := 0; i < nAcceptor; i++ {
-		acceptorsAddr = append(acceptorsAddr, fmt.Sprint(":", portStart+i))
-	}
-	for i := 0; i < nProposer; i++ {
-		proposersAddr = append(proposersAddr, fmt.Sprint(":", portStart+nAcceptor+i))
-	}
 
 	var wg sync.WaitGroup
 	for _, acceptor := range conf.Cluster.Acceptors {
@@ -55,7 +46,7 @@ func main() {
 			s.RegisterService(&pb.Acceptor_ServiceDesc, paxos.NewAcceptor())
 			lis, err := net.Listen("tcp", addr)
 			if err != nil {
-				log.Fatal("listen failed", err)
+				log.Fatal("listen failed ", err)
 			}
 			log.Println("acceptor listen at ", addr)
 			log.Fatal(s.Serve(lis))
@@ -64,16 +55,14 @@ func main() {
 
 	idService := NewUUIDService()
 
-	var proposers []*paxos.Proposer
-
 	for _, proposer := range conf.Cluster.Proposers {
 		wg.Add(1)
 		go func(addr string) {
 			defer wg.Done()
 			s := grpc.NewServer()
 			proposer := paxos.NewProposer(addr, quorum, &conf.Cluster, idService)
-			proposers = append(proposers, proposer)
 			s.RegisterService(&pb.Proposer_ServiceDesc, proposer)
+			s.RegisterService(&pb.Learner_ServiceDesc, proposer)
 			lis, err := net.Listen("tcp", addr)
 			if err != nil {
 				log.Fatal("listen failed", err)

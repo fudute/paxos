@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 
 	"gopkg.in/yaml.v3"
@@ -12,6 +13,7 @@ type Config struct {
 type Cluster struct {
 	Acceptors []*Node `yaml:"acceptors"`
 	Proposers []*Node `yaml:"proposers"`
+	Learners  []*Node `yaml:"learners"`
 }
 
 type Node struct {
@@ -22,9 +24,11 @@ type Node struct {
 func LoadConfig() (*Config, error) {
 	conf := Config{}
 
+	pwd, _ := os.Getwd()
+	fmt.Printf("pwd: %v\n", pwd)
 	file := os.Getenv("CLUSTER_CONFIG")
 	if file == "" {
-		file = "config.yaml"
+		file = "/Users/bytedance/go/src/github.com/fudute/paxos/config/config.yaml"
 	}
 	data, err := os.ReadFile(file)
 	if err != nil {
@@ -33,5 +37,7 @@ func LoadConfig() (*Config, error) {
 	if err = yaml.Unmarshal(data, &conf); err != nil {
 		return nil, err
 	}
+	conf.Cluster.Learners = append(conf.Cluster.Learners, conf.Cluster.Proposers...)
+
 	return &conf, nil
 }
