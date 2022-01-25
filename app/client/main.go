@@ -4,13 +4,16 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
 
 	"github.com/fudute/paxos/protoc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-var N = 100000
+var N = 10000
+
+var wg sync.WaitGroup
 
 func main() {
 	cc1, err := grpc.Dial(":9000", grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -32,14 +35,15 @@ func main() {
 		close(ch)
 	}()
 
+	wg.Add(2)
 	go send(protoc.NewProposerClient(cc1), ch)
 	go send(protoc.NewProposerClient(cc2), ch)
 
-	fmt.Println("done")
-	fmt.Scan(new(byte))
+	wg.Wait()
 }
 
 func send(cli protoc.ProposerClient, in <-chan string) {
+	defer wg.Done()
 	var err error
 	for {
 		value, ok := <-in

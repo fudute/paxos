@@ -25,6 +25,7 @@ message PrepareReply {
     int64 AcceptedProposal = 1;
     string AcceptedValue = 2;
     bool NoMoreAccepted = 3;
+    string From = 4;
 }
 
 message AcceptRequest {
@@ -34,6 +35,7 @@ message AcceptRequest {
 }
 message AcceptReply {
     int64 MiniProposal = 1;
+    string From = 2;
 }
 
 message LearnRequest {

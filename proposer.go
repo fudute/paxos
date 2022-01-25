@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/fudute/paxos/config"
@@ -30,6 +31,9 @@ type Proposer struct {
 	expire   *time.Timer
 	interval time.Duration
 
+	noMorePrepared      sync.Map
+	noMorePreparedCount int32
+
 	pb.UnimplementedProposerServer
 	pb.UnimplementedLearnerServer
 }
@@ -55,6 +59,7 @@ func NewProposer(self string, quorum int, cluster *config.Cluster, generator IDS
 		interval:          time.Second,
 		cluster:           cluster,
 		conns:             NewConnectionsManager(),
+		noMorePrepared:    sync.Map{},
 	}
 	return proposer
 }
@@ -137,24 +142,43 @@ func (p *Proposer) chooseOne(value string) (chosen string) {
 	index := p.pickSlot()
 	for {
 		proposalNum := p.proposalGenerator.Next()
-		prepareReplys := p.broadcast(p.cluster.Acceptors, func(node *config.Node) interface{} { return p.onPrepare(index, proposalNum, node) })
 
-		var mini int64
-		for i := 0; i <= p.quorum; i++ {
-			reply := (<-prepareReplys).(*pb.PrepareReply)
-			if reply.AcceptedProposal > mini && reply.AcceptedValue != "" {
-				value = reply.AcceptedValue
-				mini = reply.AcceptedProposal
+		if int(p.noMorePreparedCount) < p.quorum {
+			prepareReplys := p.broadcast(p.cluster.Acceptors,
+				func(node *config.Node) interface{} {
+					return p.onPrepare(index, proposalNum, node)
+				})
+
+			var mini int64
+			for i := 0; i <= p.quorum; i++ {
+				reply := (<-prepareReplys).(*pb.PrepareReply)
+				if reply.AcceptedProposal > mini && reply.AcceptedValue != "" {
+					value = reply.AcceptedValue
+					mini = reply.AcceptedProposal
+				}
+				if reply.NoMoreAccepted {
+					_, loaded := p.noMorePrepared.LoadOrStore(reply.From, nil)
+					if loaded {
+						atomic.AddInt32(&p.noMorePreparedCount, 1)
+					}
+				}
 			}
 		}
 
-		acceptReplys := p.broadcast(p.cluster.Acceptors, func(node *config.Node) interface{} { return p.onAccept(index, proposalNum, value, node) })
+		acceptReplys := p.broadcast(p.cluster.Acceptors,
+			func(node *config.Node) interface{} {
+				return p.onAccept(index, proposalNum, value, node)
+			})
 
 		isChosen := true
 		for i := 0; i <= p.quorum; i++ {
 			reply := (<-acceptReplys).(*pb.AcceptReply)
 			if reply.GetMiniProposal() > proposalNum {
 				isChosen = false
+				_, loaded := p.noMorePrepared.LoadAndDelete(reply.From)
+				if loaded {
+					atomic.AddInt32(&p.noMorePreparedCount, -1)
+				}
 				break
 			}
 		}
