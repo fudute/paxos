@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/fudute/paxos/protoc"
 	"google.golang.org/grpc"
@@ -16,6 +17,8 @@ var N = 10000
 var wg sync.WaitGroup
 
 func main() {
+	start := time.Now()
+
 	cc1, err := grpc.Dial(":9000", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatal(err)
@@ -40,6 +43,8 @@ func main() {
 	go send(protoc.NewProposerClient(cc2), ch)
 
 	wg.Wait()
+
+	fmt.Println("qps: ", float64(N)/time.Since(start).Seconds())
 }
 
 func send(cli protoc.ProposerClient, in <-chan string) {
