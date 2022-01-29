@@ -32,9 +32,7 @@ func (l *mysqlLogStore) Prepare(req *pb.PrepareRequest) (*pb.PrepareReply, error
 	ins := LogEntry{}
 
 	err := l.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where(LogEntry{ID: req.Index}).
-			FirstOrCreate(&ins).Error; err != nil {
+		if err := tx.FirstOrCreate(&ins, LogEntry{ID: req.Index}).Error; err != nil {
 			return err
 		}
 		if req.GetProposalNum() > ins.MiniProposal {
@@ -57,9 +55,7 @@ func (l *mysqlLogStore) Accept(req *pb.AcceptRequest) (*pb.AcceptReply, error) {
 	ins := LogEntry{}
 
 	err := l.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&ins).Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where(LogEntry{ID: req.Index}).
-			FirstOrCreate(&ins).Error; err != nil {
+		if err := tx.FirstOrCreate(&ins, LogEntry{ID: req.Index}).Error; err != nil {
 			return err
 		}
 

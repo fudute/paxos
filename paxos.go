@@ -22,7 +22,7 @@ type PaxosService struct {
 	self              string
 	quorum            int
 	proposalGenerator IDService
-	cluster           *config.Cluster
+	config            *config.Config
 	conns             *ConnectionsManager
 
 	store store.LogStore
@@ -40,7 +40,7 @@ type PaxosService struct {
 	pb.UnimplementedLearnerServer
 }
 
-func NewPaxosService(name, addr string, quorum int, cluster *config.Cluster, generator IDService) *PaxosService {
+func NewPaxosService(name, addr string, quorum int, config *config.Config, generator IDService) *PaxosService {
 	dsn := fmt.Sprintf("root:123@tcp(127.0.0.1:3306)/demo_%s?charset=utf8mb4&parseTime=True&loc=Local", name)
 	store, err := store.NewMySQLLogStore(dsn)
 	if err != nil {
@@ -51,8 +51,8 @@ func NewPaxosService(name, addr string, quorum int, cluster *config.Cluster, gen
 		self:              addr,
 		quorum:            quorum,
 		proposalGenerator: generator,
-		interval:          time.Second,
-		cluster:           cluster,
+		interval:          time.Second * 3,
+		config:            config,
 		conns:             NewConnectionsManager(),
 		noMoreAccepteded:  sync.Map{},
 		store:             store,
@@ -73,7 +73,7 @@ func (s *PaxosService) LeaderExpired() bool {
 }
 
 func (s *PaxosService) Propose(ctx context.Context, req *pb.ProposeRequest) (*pb.ProposeReply, error) {
-	if s.leader != s.self && !s.LeaderExpired() {
+	if s.config.Leader && s.leader != s.self && !s.LeaderExpired() {
 		cli, err := s.conns.Proposer(s.leader)
 		if err == nil {
 			return cli.Propose(ctx, req)
@@ -94,7 +94,7 @@ func (s *PaxosService) chooseOne(value string) (chosen string) {
 		proposalNum := s.proposalGenerator.Next()
 
 		if int(s.noMoreAcceptedCount) < s.quorum {
-			prepareReplys := s.broadcast(s.cluster.Nodes,
+			prepareReplys := s.broadcast(s.config.Cluster.Nodes,
 				func(node *config.Node) interface{} {
 					return s.onPrepare(index, proposalNum, node)
 				})
@@ -120,7 +120,7 @@ func (s *PaxosService) chooseOne(value string) (chosen string) {
 			}
 		}
 
-		acceptReplys := s.broadcast(s.cluster.Nodes,
+		acceptReplys := s.broadcast(s.config.Cluster.Nodes,
 			func(node *config.Node) interface{} {
 				return s.onAccept(index, proposalNum, value, node)
 			})
@@ -139,7 +139,8 @@ func (s *PaxosService) chooseOne(value string) (chosen string) {
 		}
 
 		if isChosen {
-			s.broadcast(s.cluster.Nodes, func(node *config.Node) interface{} {
+			log.Printf("[%v] value at %v is chosen %v", s.name, index, value)
+			s.broadcast(s.config.Cluster.Nodes, func(node *config.Node) interface{} {
 				return s.OnLearn(index, value, node)
 			})
 			break
@@ -229,6 +230,18 @@ func (s *PaxosService) Accept(ctx context.Context, req *pb.AcceptRequest) (*pb.A
 }
 
 func (s *PaxosService) Learn(ctx context.Context, req *pb.LearnRequest) (*pb.LearnReply, error) {
-	log.Printf("[%v] value at %v is chosen %v", s.name, req.Index, req.ProposalValue)
+
+	if s.config.Leader {
+		if s.leader != req.Proposer {
+			log.Printf("[P%v] leader change from %v to %v", s.self, s.leader, req.Proposer)
+		}
+
+		s.leader = req.Proposer
+		if s.expire == nil {
+			s.expire = time.NewTimer(s.interval)
+		} else {
+			s.expire.Reset(s.interval)
+		}
+	}
 	return s.store.Learn(req)
 }

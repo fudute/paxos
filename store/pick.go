@@ -43,12 +43,12 @@ func (p *Picker) Pick() int {
 }
 
 func (p *Picker) Put(i int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	if i < p.off {
 		return
 	}
-
-	p.mu.Lock()
-	defer p.mu.Unlock()
 
 	for i-p.off >= len(p.window) {
 		p.window = append(p.window, make([]Status, len(p.window)+1)...)

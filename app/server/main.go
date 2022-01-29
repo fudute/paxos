@@ -60,7 +60,7 @@ func main() {
 		go func(node *config.Node) {
 			defer wg.Done()
 			s := grpc.NewServer()
-			service := paxos.NewPaxosService(node.Name, node.Addr, quorum, &conf.Cluster, idService)
+			service := paxos.NewPaxosService(node.Name, node.Addr, quorum, conf, idService)
 			s.RegisterService(&pb.Proposer_ServiceDesc, service)
 			s.RegisterService(&pb.Learner_ServiceDesc, service)
 			s.RegisterService(&pb.Acceptor_ServiceDesc, service)

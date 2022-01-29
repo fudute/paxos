@@ -9,6 +9,7 @@ import (
 
 type Config struct {
 	Cluster Cluster `yaml:"cluster"`
+	Leader  bool    `yaml:"leader"`
 }
 type Cluster struct {
 	Nodes []*Node `yaml:"nodes"`

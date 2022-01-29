@@ -6,3 +6,4 @@ cluster:
       addr: :9001
     - name: n3 
       addr: :9002
+  leader: false

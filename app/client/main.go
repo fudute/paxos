@@ -18,6 +18,7 @@ var N = flag.Int("n", 10, "times")
 var wg sync.WaitGroup
 
 func main() {
+	flag.Parse()
 	start := time.Now()
 
 	cc1, err := grpc.Dial(":9000", grpc.WithTransportCredentials(insecure.NewCredentials()))
