@@ -3,6 +3,7 @@ package store
 import (
 	"sync/atomic"
 
+	"github.com/cenk/backoff"
 	pb "github.com/fudute/paxos/protoc"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -16,7 +17,9 @@ type mysqlLogStore struct {
 }
 
 func NewMySQLLogStore(dsn string) (LogStore, error) {
-	db, err := gorm.Open(mysql.Open(dsn), nil)
+	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
+		SkipDefaultTransaction: true,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -31,16 +34,19 @@ func NewMySQLLogStore(dsn string) (LogStore, error) {
 func (l *mysqlLogStore) Prepare(req *pb.PrepareRequest) (*pb.PrepareReply, error) {
 	ins := LogEntry{}
 
-	err := l.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.FirstOrCreate(&ins, LogEntry{ID: req.Index}).Error; err != nil {
-			return err
-		}
-		if req.GetProposalNum() > ins.MiniProposal {
-			ins.MiniProposal = req.GetProposalNum()
-			return tx.Model(LogEntry{}).Where("id=?", req.Index).Updates(LogEntry{MiniProposal: req.GetProposalNum()}).Error
-		}
-		return nil
-	})
+	err := backoff.Retry(func() error {
+		return l.db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).FirstOrCreate(&ins, LogEntry{ID: req.Index}).Error; err != nil {
+				return err
+			}
+			if req.GetProposalNum() > ins.MiniProposal {
+				ins.MiniProposal = req.GetProposalNum()
+				return tx.Model(LogEntry{}).Where("id=?", req.Index).Updates(LogEntry{MiniProposal: req.GetProposalNum()}).Error
+			}
+			return nil
+		})
+	}, backoff.NewExponentialBackOff())
+
 	if err != nil {
 		return nil, err
 	}
@@ -54,23 +60,24 @@ func (l *mysqlLogStore) Prepare(req *pb.PrepareRequest) (*pb.PrepareReply, error
 func (l *mysqlLogStore) Accept(req *pb.AcceptRequest) (*pb.AcceptReply, error) {
 	ins := LogEntry{}
 
-	err := l.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.FirstOrCreate(&ins, LogEntry{ID: req.Index}).Error; err != nil {
-			return err
-		}
-
-		if req.GetProposalNum() >= ins.MiniProposal {
-			ins.MiniProposal = req.GetProposalNum()
-			ins.AcceptedProposal = ins.MiniProposal
-			ins.AcceptedValue = req.GetProposalValue()
-
-			for l.largestAccepted < req.Index {
-				atomic.CompareAndSwapInt64(&l.largestAccepted, l.largestAccepted, req.Index)
+	err := backoff.Retry(func() error {
+		return l.db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).FirstOrCreate(&ins, LogEntry{ID: req.Index}).Error; err != nil {
+				return err
 			}
-		}
-		tx.Where(LogEntry{ID: req.Index}).Updates(&ins)
-		return nil
-	})
+			if req.GetProposalNum() >= ins.MiniProposal {
+				ins.MiniProposal = req.GetProposalNum()
+				ins.AcceptedProposal = ins.MiniProposal
+				ins.AcceptedValue = req.GetProposalValue()
+
+				for l.largestAccepted < req.Index {
+					atomic.CompareAndSwapInt64(&l.largestAccepted, l.largestAccepted, req.Index)
+				}
+			}
+			return tx.Where(LogEntry{ID: req.Index}).Updates(&ins).Error
+		})
+	}, backoff.NewExponentialBackOff())
+
 	if err != nil {
 		return nil, err
 	}
