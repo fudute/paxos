@@ -11,9 +11,7 @@ type Config struct {
 	Cluster Cluster `yaml:"cluster"`
 }
 type Cluster struct {
-	Acceptors []*Node `yaml:"acceptors"`
-	Proposers []*Node `yaml:"proposers"`
-	Learners  []*Node `yaml:"learners"`
+	Nodes []*Node `yaml:"nodes"`
 }
 
 type Node struct {
@@ -37,7 +35,5 @@ func LoadConfig() (*Config, error) {
 	if err = yaml.Unmarshal(data, &conf); err != nil {
 		return nil, err
 	}
-	conf.Cluster.Learners = append(conf.Cluster.Learners, conf.Cluster.Proposers...)
-
 	return &conf, nil
 }

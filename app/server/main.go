@@ -33,43 +33,44 @@ func main() {
 	}
 
 	log.Printf("load config: %#v", conf)
-	var nAcceptor = len(conf.Cluster.Acceptors)
+	var nAcceptor = len(conf.Cluster.Nodes)
 
 	var quorum = (nAcceptor + 1) / 2
 
 	var wg sync.WaitGroup
-	for _, acceptor := range conf.Cluster.Acceptors {
-		wg.Add(1)
-		go func(addr string) {
-			defer wg.Done()
-			s := grpc.NewServer()
-			s.RegisterService(&pb.Acceptor_ServiceDesc, paxos.NewAcceptor())
-			lis, err := net.Listen("tcp", addr)
-			if err != nil {
-				log.Fatal("listen failed ", err)
-			}
-			log.Println("acceptor listen at ", addr)
-			log.Fatal(s.Serve(lis))
-		}(acceptor.Addr)
-	}
+	// for _, acceptor := range conf.Cluster.Acceptors {
+	// 	wg.Add(1)
+	// 	go func(addr string) {
+	// 		defer wg.Done()
+	// 		s := grpc.NewServer()
+	// 		s.RegisterService(&pb.Acceptor_ServiceDesc, paxos.NewAcceptor())
+	// 		lis, err := net.Listen("tcp", addr)
+	// 		if err != nil {
+	// 			log.Fatal("listen failed ", err)
+	// 		}
+	// 		log.Println("acceptor listen at ", addr)
+	// 		log.Fatal(s.Serve(lis))
+	// 	}(acceptor.Addr)
+	// }
 
 	idService := NewUUIDService()
 
-	for _, proposer := range conf.Cluster.Proposers {
+	for _, node := range conf.Cluster.Nodes {
 		wg.Add(1)
-		go func(addr string) {
+		go func(node *config.Node) {
 			defer wg.Done()
 			s := grpc.NewServer()
-			proposer := paxos.NewProposer(addr, quorum, &conf.Cluster, idService)
-			s.RegisterService(&pb.Proposer_ServiceDesc, proposer)
-			s.RegisterService(&pb.Learner_ServiceDesc, proposer)
-			lis, err := net.Listen("tcp", addr)
+			service := paxos.NewPaxosService(node.Name, node.Addr, quorum, &conf.Cluster, idService)
+			s.RegisterService(&pb.Proposer_ServiceDesc, service)
+			s.RegisterService(&pb.Learner_ServiceDesc, service)
+			s.RegisterService(&pb.Acceptor_ServiceDesc, service)
+			lis, err := net.Listen("tcp", node.Addr)
 			if err != nil {
 				log.Fatal("listen failed", err)
 			}
-			log.Println("proposer listen at ", addr)
+			log.Println("proposer listen at ", node.Addr)
 			log.Fatal(s.Serve(lis))
-		}(proposer.Addr)
+		}(node)
 	}
 
 	wg.Wait()

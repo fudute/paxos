@@ -9,30 +9,24 @@ import (
 )
 
 type ConnectionsManager struct {
-	m  map[string]grpc.ClientConnInterface
-	mu sync.Mutex
+	m sync.Map
 }
 
 func NewConnectionsManager() *ConnectionsManager {
-	return &ConnectionsManager{
-		m: make(map[string]grpc.ClientConnInterface),
-	}
+	return &ConnectionsManager{}
 }
 
 func (cp *ConnectionsManager) GetConn(addr string) (grpc.ClientConnInterface, error) {
-	cp.mu.Lock()
-	defer cp.mu.Unlock()
-
-	if cc, ok := cp.m[addr]; ok {
-		return cc, nil
+	if cc, ok := cp.m.Load(addr); ok {
+		return cc.(grpc.ClientConnInterface), nil
 	}
 
 	cc, err := grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, err
 	}
-	cp.m[addr] = cc
-	return cc, nil
+	actual, _ := cp.m.LoadOrStore(addr, cc)
+	return actual.(grpc.ClientConnInterface), nil
 }
 
 func (cp *ConnectionsManager) Proposer(addr string) (pb.ProposerClient, error) {
@@ -49,7 +43,6 @@ func (cp *ConnectionsManager) Acceptor(addr string) (pb.AcceptorClient, error) {
 		return nil, err
 	}
 	cli := pb.NewAcceptorClient(cc)
-
 	return cli, nil
 }
 func (cp *ConnectionsManager) Learner(addr string) (pb.LearnerClient, error) {

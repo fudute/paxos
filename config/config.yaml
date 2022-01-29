@@ -1,13 +1,8 @@
 cluster:
-  acceptors:
-    - name: a1
-      addr: :8000
-    - name: a2
-      addr: :8001
-    - name: a3
-      addr: :8002
-  proposers:
-    - name: p1
+  nodes:
+    - name: n1
       addr: :9000
-    - name: p2
+    - name: n2
       addr: :9001
+    - name: n3 
+      addr: :9002

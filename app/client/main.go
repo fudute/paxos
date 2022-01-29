@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"sync"
@@ -12,7 +13,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-var N = 10000
+var N = flag.Int("n", 10, "times")
 
 var wg sync.WaitGroup
 
@@ -32,7 +33,7 @@ func main() {
 	ch := make(chan string)
 
 	go func() {
-		for i := 0; i < N; i++ {
+		for i := 0; i < *N; i++ {
 			ch <- fmt.Sprint(i)
 		}
 		close(ch)
@@ -44,7 +45,7 @@ func main() {
 
 	wg.Wait()
 
-	fmt.Println("qps: ", float64(N)/time.Since(start).Seconds())
+	fmt.Println("qps: ", float64(*N)/time.Since(start).Seconds())
 }
 
 func send(cli protoc.ProposerClient, in <-chan string) {
