@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -24,6 +25,7 @@ type PaxosService struct {
 	proposalGenerator IDService
 	config            *config.Config
 	conns             *ConnectionsManager
+	logger            *log.Logger
 
 	store store.LogStore
 
@@ -41,8 +43,10 @@ type PaxosService struct {
 }
 
 func NewPaxosService(name, addr string, quorum int, config *config.Config, generator IDService) *PaxosService {
-	dsn := fmt.Sprintf("root:123@tcp(127.0.0.1:3306)/demo_%s?charset=utf8mb4&parseTime=True&loc=Local", name)
-	store, err := store.NewMySQLLogStore(dsn)
+	// dsn := fmt.Sprintf("root:123@tcp(127.0.0.1:3306)/demo_%s?charset=utf8mb4&parseTime=True&loc=Local", name)
+	// store, err := store.NewMySQLLogStore(dsn)
+	path := fmt.Sprint(os.TempDir()+"/test_", name)
+	store, err := store.NewLevelDBLogStore(path)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -56,6 +60,7 @@ func NewPaxosService(name, addr string, quorum int, config *config.Config, gener
 		conns:             NewConnectionsManager(),
 		noMoreAccepteded:  sync.Map{},
 		store:             store,
+		logger:            log.New(os.Stderr, fmt.Sprintf("[%v]", name), 0),
 	}
 	return proposer
 }
@@ -80,7 +85,12 @@ func (s *PaxosService) Propose(ctx context.Context, req *pb.ProposeRequest) (*pb
 		}
 	}
 	for {
-		chosen := s.chooseOne(req.ProposalValue)
+		chosen, err := s.chooseOne(req.ProposalValue)
+		if err != nil {
+			s.logger.Print("choose filed ", err)
+			<-time.After(time.Second)
+			continue
+		}
 		if req.ProposalValue == chosen {
 			break
 		}
@@ -88,12 +98,15 @@ func (s *PaxosService) Propose(ctx context.Context, req *pb.ProposeRequest) (*pb
 	return &pb.ProposeReply{}, nil
 }
 
-func (s *PaxosService) chooseOne(value string) (chosen string) {
+func (s *PaxosService) chooseOne(value string) (chosen string, err error) {
 	index := s.store.PickSlot()
+	// s.logger.Print("start to chose at ", index)
+	var proposalNum int64
 	for {
-		proposalNum := s.proposalGenerator.Next()
+		// s.logger.Println("use propose number ", proposalNum)
 
 		if int(s.noMoreAcceptedCount) < s.quorum {
+			proposalNum = s.proposalGenerator.Next()
 			prepareReplys := s.broadcast(s.config.Cluster.Nodes,
 				func(node *config.Node) interface{} {
 					return s.onPrepare(index, proposalNum, node)
@@ -101,12 +114,7 @@ func (s *PaxosService) chooseOne(value string) (chosen string) {
 
 			var mini int64
 			for i := 0; i <= s.quorum; i++ {
-				reply, ok := (<-prepareReplys).(*pb.PrepareReply)
-				// 如果失败了，等待一段时间后重试
-				if !ok {
-					<-time.After(time.Second)
-					continue
-				}
+				reply := (<-prepareReplys).(*pb.PrepareReply)
 				if reply.AcceptedProposal > mini && reply.AcceptedValue != "" {
 					value = reply.AcceptedValue
 					mini = reply.AcceptedProposal
@@ -139,14 +147,14 @@ func (s *PaxosService) chooseOne(value string) (chosen string) {
 		}
 
 		if isChosen {
-			log.Printf("[%v] value at %v is chosen %v", s.name, index, value)
+			s.logger.Printf("value at %v is chosen %v", index, value)
 			s.broadcast(s.config.Cluster.Nodes, func(node *config.Node) interface{} {
 				return s.OnLearn(index, value, node)
 			})
 			break
 		}
 	}
-	return value
+	return value, nil
 }
 
 func (s *PaxosService) broadcast(nodes []*config.Node, f func(node *config.Node) interface{}) <-chan interface{} {
@@ -181,9 +189,10 @@ func (s *PaxosService) onPrepare(index, proposalNum int64, node *config.Node) *p
 		ProposalNum: proposalNum,
 	})
 	if err != nil {
-		log.Printf("[P%s] Prepare on acceptor %v failed %v", s.self, node.Addr, err)
+		s.logger.Printf("Prepare on acceptor %v failed %v", node.Addr, err)
 		return nil
 	}
+	// s.logger.Printf("prepare on %v acceptedProposal %v acceptedValue %v", node.Name, reply.AcceptedProposal, reply.AcceptedValue)
 	return reply
 }
 
@@ -198,9 +207,10 @@ func (s *PaxosService) onAccept(index, proposalNum int64, value string, node *co
 		ProposalValue: value,
 	})
 	if err != nil {
-		log.Printf("[P%s] Accept on acceptor %v failed %v", s.self, node.Addr, err)
+		s.logger.Printf("Accept on acceptor %v failed %v", node.Addr, err)
 		return nil
 	}
+	// s.logger.Printf("accept on %v, reply %v", node.Name, reply.MiniProposal)
 	return reply
 }
 
@@ -215,7 +225,7 @@ func (s *PaxosService) OnLearn(index int64, value string, node *config.Node) *pb
 		ProposalValue: value,
 	})
 	if err != nil {
-		log.Printf("[P%s] Learn on learner %v failed %v", s.self, node.Addr, err)
+		s.logger.Printf("Learn on learner %v failed %v", node.Addr, err)
 		return nil
 	}
 	return reply
@@ -243,5 +253,7 @@ func (s *PaxosService) Learn(ctx context.Context, req *pb.LearnRequest) (*pb.Lea
 			s.expire.Reset(s.interval)
 		}
 	}
+
+	s.logger.Printf("learn %v %v", req.Index, req.ProposalValue)
 	return s.store.Learn(req)
 }

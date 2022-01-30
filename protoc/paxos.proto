@@ -52,14 +52,14 @@ message ProposeRequest {
 message ProposeReply {
 }
 
-/* enum LogEntryStatus { */
-/*     Idle = 0; */
-/*     Running = 1; */
-/*     Chosen = 2; */
-/* } */
-/* message LogEntry { */
-/*     int64 MiniProposal = 1; */
-/*     int64 AcceptedProposal = 2; */
-/*     string AcceptedValue = 3; */
-/*     LogEntryStatus Status = 4; */
-/* } */
+enum LogEntryStatus {
+    Idle = 0;
+    Running = 1;
+    Chosen = 2;
+}
+message LogEntry {
+    int64 MiniProposal = 1;
+    int64 AcceptedProposal = 2;
+    string AcceptedValue = 3;
+    LogEntryStatus Status = 4;
+}

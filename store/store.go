@@ -21,5 +21,6 @@ type LogStore interface {
 	Prepare(req *pb.PrepareRequest) (*pb.PrepareReply, error)
 	Accept(req *pb.AcceptRequest) (*pb.AcceptReply, error)
 	Learn(req *pb.LearnRequest) (*pb.LearnReply, error)
+	Range() ([]*LogEntry, error)
 	PickSlot() int64
 }

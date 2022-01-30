@@ -3,15 +3,19 @@ package store
 import (
 	"bytes"
 	"encoding/gob"
+	"errors"
+	"os/exec"
+	"strconv"
 	"sync"
 	"sync/atomic"
 
 	pb "github.com/fudute/paxos/protoc"
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/opt"
+	"google.golang.org/protobuf/proto"
 )
 
-type levelDBLogStore struct {
+type LevelDBLogStore struct {
 	mu sync.Mutex
 	db *leveldb.DB
 
@@ -23,71 +27,77 @@ type levelDBLogStore struct {
 	ro *opt.ReadOptions
 }
 
-func (l *levelDBLogStore) get(key interface{}, value interface{}) error {
-	defer l.buf.Reset()
-
-	enc := gob.NewEncoder(l.buf)
-	err := enc.Encode(key)
+func NewLevelDBLogStore(path string) (*LevelDBLogStore, error) {
+	exec.Command("rm", "-rf", path).Run()
+	db, err := leveldb.OpenFile(path, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	bs, err := l.db.Get(l.buf.Bytes(), l.ro)
-	if err != nil {
-		return err
-	}
-	return gob.NewDecoder(bytes.NewReader(bs)).Decode(value)
+	return &LevelDBLogStore{db: db, buf: bytes.NewBuffer(nil)}, nil
 }
 
-func (l *levelDBLogStore) set(key interface{}, value interface{}) error {
-	defer l.buf.Reset()
-
-	enc := gob.NewEncoder(l.buf)
-	err := enc.Encode(key)
+func (l *LevelDBLogStore) get(index int64) (*pb.LogEntry, error) {
+	key := []byte(strconv.Itoa(int(index)))
+	bs, err := l.db.Get(key, l.ro)
 	if err != nil {
-		return err
+		return nil, err
 	}
-
-	ind := l.buf.Len()
-	err = enc.Encode(value)
-	if err != nil {
-		return err
+	entry := new(pb.LogEntry)
+	if err := proto.Unmarshal(bs, entry); err != nil {
+		return nil, err
 	}
-	return l.db.Put(l.buf.Bytes()[:ind], l.buf.Bytes()[ind+1:], l.wo)
+	return entry, nil
 }
 
-func (l *levelDBLogStore) Prepare(req *pb.PrepareRequest) (*pb.PrepareReply, error) {
+func (l *LevelDBLogStore) set(index int64, value *pb.LogEntry) error {
+	key := []byte(strconv.Itoa(int(index)))
+	bs, err := proto.Marshal(value)
+	if err != nil {
+		return err
+	}
+	return l.db.Put(key, bs, l.wo)
+}
+
+func (l *LevelDBLogStore) Prepare(req *pb.PrepareRequest) (*pb.PrepareReply, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	ins := new(pb.LogEntry)
-
-	err := l.get(req.GetIndex(), ins)
+	ins, err := l.get(req.GetIndex())
 	if err != nil {
-		return nil, err
+		if !errors.Is(err, leveldb.ErrNotFound) {
+			return nil, err
+		}
+		ins = new(pb.LogEntry)
 	}
 
 	if req.GetProposalNum() > ins.MiniProposal {
 		ins.MiniProposal = req.GetProposalNum()
 	}
 
-	l.set(req.GetIndex(), ins)
+	err = l.set(req.GetIndex(), ins)
+	if err != nil {
+		return nil, err
+	}
 
 	return &pb.PrepareReply{
 		AcceptedProposal: ins.AcceptedProposal,
 		AcceptedValue:    ins.AcceptedValue,
-		NoMoreAccepted:   l.largestAccepted < req.Index,
+		// NoMoreAccepted:   l.largestAccepted < req.Index,
+		NoMoreAccepted: false,
 	}, nil
 }
 
-func (l *levelDBLogStore) Accept(req *pb.AcceptRequest) (*pb.AcceptReply, error) {
+func (l *LevelDBLogStore) Accept(req *pb.AcceptRequest) (*pb.AcceptReply, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
 	ins := new(pb.LogEntry)
-	err := l.get(req.GetIndex(), ins)
+	ins, err := l.get(req.GetIndex())
 	if err != nil {
-		return nil, err
+		if !errors.Is(err, leveldb.ErrNotFound) {
+			return nil, err
+		}
 	}
 
 	if req.GetProposalNum() >= ins.MiniProposal {
@@ -109,10 +119,13 @@ func (l *levelDBLogStore) Accept(req *pb.AcceptRequest) (*pb.AcceptReply, error)
 	}, nil
 
 }
-func (l *levelDBLogStore) Learn(req *pb.LearnRequest) (*pb.LearnReply, error) {
-	err := l.set(req.GetIndex(), &LogEntry{
+func (l *LevelDBLogStore) Learn(req *pb.LearnRequest) (*pb.LearnReply, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	err := l.set(req.GetIndex(), &pb.LogEntry{
 		AcceptedValue: req.GetProposalValue(),
-		IsChosen:      true,
+		Status:        pb.LogEntryStatus_Chosen,
 	})
 	if err != nil {
 		return nil, err
@@ -120,6 +133,22 @@ func (l *levelDBLogStore) Learn(req *pb.LearnRequest) (*pb.LearnReply, error) {
 	return &pb.LearnReply{}, nil
 }
 
-func (l *levelDBLogStore) PickSlot() int64 {
+func (l *LevelDBLogStore) PickSlot() int64 {
 	return atomic.AddInt64(&l.largestChosen, 1)
+}
+func (l *LevelDBLogStore) Range() ([]*LogEntry, error) {
+
+	sh, err := l.db.GetSnapshot()
+	if err != nil {
+		return nil, err
+	}
+
+	var res []*LogEntry
+	iter := sh.NewIterator(nil, l.ro)
+	for iter.Next() {
+		var entry LogEntry
+		gob.NewDecoder(bytes.NewReader(iter.Value())).Decode(&entry)
+		res = append(res, &entry)
+	}
+	return res, nil
 }

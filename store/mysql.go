@@ -10,13 +10,13 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-type mysqlLogStore struct {
+type MysqlLogStore struct {
 	db              *gorm.DB
 	largestAccepted int64
 	picker          Picker
 }
 
-func NewMySQLLogStore(dsn string) (LogStore, error) {
+func NewMySQLLogStore(dsn string) (*MysqlLogStore, error) {
 	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
 		SkipDefaultTransaction: true,
 	})
@@ -26,12 +26,12 @@ func NewMySQLLogStore(dsn string) (LogStore, error) {
 	db.Migrator().DropTable(LogEntry{})
 	db.AutoMigrate(LogEntry{})
 
-	return &mysqlLogStore{
+	return &MysqlLogStore{
 		db: db,
 	}, nil
 }
 
-func (l *mysqlLogStore) Prepare(req *pb.PrepareRequest) (*pb.PrepareReply, error) {
+func (l *MysqlLogStore) Prepare(req *pb.PrepareRequest) (*pb.PrepareReply, error) {
 	ins := LogEntry{}
 
 	err := backoff.Retry(func() error {
@@ -57,7 +57,7 @@ func (l *mysqlLogStore) Prepare(req *pb.PrepareRequest) (*pb.PrepareReply, error
 	}, nil
 }
 
-func (l *mysqlLogStore) Accept(req *pb.AcceptRequest) (*pb.AcceptReply, error) {
+func (l *MysqlLogStore) Accept(req *pb.AcceptRequest) (*pb.AcceptReply, error) {
 	ins := LogEntry{}
 
 	err := backoff.Retry(func() error {
@@ -85,7 +85,7 @@ func (l *mysqlLogStore) Accept(req *pb.AcceptRequest) (*pb.AcceptReply, error) {
 		MiniProposal: ins.MiniProposal,
 	}, nil
 }
-func (l *mysqlLogStore) Learn(req *pb.LearnRequest) (*pb.LearnReply, error) {
+func (l *MysqlLogStore) Learn(req *pb.LearnRequest) (*pb.LearnReply, error) {
 	ins := LogEntry{
 		ID:            req.Index,
 		AcceptedValue: req.ProposalValue,
@@ -102,6 +102,6 @@ func (l *mysqlLogStore) Learn(req *pb.LearnRequest) (*pb.LearnReply, error) {
 	return &pb.LearnReply{}, err
 }
 
-func (l *mysqlLogStore) PickSlot() int64 {
+func (l *MysqlLogStore) PickSlot() int64 {
 	return int64(l.picker.Pick())
 }
