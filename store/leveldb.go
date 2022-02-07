@@ -83,8 +83,6 @@ func (l *LevelDBLogStore) Prepare(req *pb.PrepareRequest) (*pb.PrepareReply, err
 	return &pb.PrepareReply{
 		AcceptedProposal: ins.AcceptedProposal,
 		AcceptedValue:    ins.AcceptedValue,
-		// NoMoreAccepted:   l.largestAccepted < req.Index,
-		NoMoreAccepted: false,
 	}, nil
 }
 

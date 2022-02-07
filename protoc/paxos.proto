@@ -24,7 +24,6 @@ message PrepareRequest {
 message PrepareReply {
     int64 AcceptedProposal = 1;
     string AcceptedValue = 2;
-    bool NoMoreAccepted = 3;
     string From = 4;
 }
 

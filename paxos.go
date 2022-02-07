@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/fudute/paxos/config"
@@ -29,14 +28,6 @@ type PaxosService struct {
 
 	store store.LogStore
 
-	// leader 信息，在leader信息有效时间内，只会接受来自leader的prepare和accept请求
-	leader   string
-	expire   *time.Timer
-	interval time.Duration
-
-	noMoreAccepteded    sync.Map
-	noMoreAcceptedCount int32
-
 	pb.UnimplementedProposerServer
 	pb.UnimplementedAcceptorServer
 	pb.UnimplementedLearnerServer
@@ -48,35 +39,15 @@ func NewPaxosService(name, addr string, quorum int, config *config.Config, gener
 		self:              addr,
 		quorum:            quorum,
 		proposalGenerator: generator,
-		interval:          time.Second * 3,
 		config:            config,
 		conns:             NewConnectionsManager(),
-		noMoreAccepteded:  sync.Map{},
 		store:             store,
 		logger:            log.New(os.Stderr, fmt.Sprintf("[%v]", name), 0),
 	}
 	return proposer
 }
 
-func (s *PaxosService) LeaderExpired() bool {
-	if s.leader == "" {
-		return true
-	}
-	select {
-	case <-s.expire.C:
-		return true
-	default:
-		return false
-	}
-}
-
 func (s *PaxosService) Propose(ctx context.Context, req *pb.ProposeRequest) (*pb.ProposeReply, error) {
-	if s.config.Leader && s.leader != s.self && !s.LeaderExpired() {
-		cli, err := s.conns.Proposer(s.leader)
-		if err == nil {
-			return cli.Propose(ctx, req)
-		}
-	}
 	for {
 		chosen, err := s.chooseOne(req.ProposalValue)
 		if err != nil {
@@ -98,26 +69,18 @@ func (s *PaxosService) chooseOne(value string) (chosen string, err error) {
 	for {
 		// s.logger.Println("use propose number ", proposalNum)
 
-		if int(s.noMoreAcceptedCount) < s.quorum {
-			proposalNum = s.proposalGenerator.Next()
-			prepareReplys := s.broadcast(s.config.Cluster.Nodes,
-				func(node *config.Node) interface{} {
-					return s.onPrepare(index, proposalNum, node)
-				})
+		proposalNum = s.proposalGenerator.Next()
+		prepareReplys := s.broadcast(s.config.Cluster.Nodes,
+			func(node *config.Node) interface{} {
+				return s.onPrepare(index, proposalNum, node)
+			})
 
-			var mini int64
-			for i := 0; i <= s.quorum; i++ {
-				reply := (<-prepareReplys).(*pb.PrepareReply)
-				if reply.AcceptedProposal > mini && reply.AcceptedValue != "" {
-					value = reply.AcceptedValue
-					mini = reply.AcceptedProposal
-				}
-				if reply.NoMoreAccepted {
-					_, loaded := s.noMoreAccepteded.LoadOrStore(reply.From, nil)
-					if loaded {
-						atomic.AddInt32(&s.noMoreAcceptedCount, 1)
-					}
-				}
+		var mini int64
+		for i := 0; i <= s.quorum; i++ {
+			reply := (<-prepareReplys).(*pb.PrepareReply)
+			if reply.AcceptedProposal > mini && reply.AcceptedValue != "" {
+				value = reply.AcceptedValue
+				mini = reply.AcceptedProposal
 			}
 		}
 
@@ -131,10 +94,6 @@ func (s *PaxosService) chooseOne(value string) (chosen string, err error) {
 			reply := (<-acceptReplys).(*pb.AcceptReply)
 			if reply.GetMiniProposal() > proposalNum {
 				isChosen = false
-				_, loaded := s.noMoreAccepteded.LoadAndDelete(reply.From)
-				if loaded {
-					atomic.AddInt32(&s.noMoreAcceptedCount, -1)
-				}
 				break
 			}
 		}
@@ -233,19 +192,6 @@ func (s *PaxosService) Accept(ctx context.Context, req *pb.AcceptRequest) (*pb.A
 }
 
 func (s *PaxosService) Learn(ctx context.Context, req *pb.LearnRequest) (*pb.LearnReply, error) {
-
-	if s.config.Leader {
-		if s.leader != req.Proposer {
-			log.Printf("[P%v] leader change from %v to %v", s.self, s.leader, req.Proposer)
-		}
-
-		s.leader = req.Proposer
-		if s.expire == nil {
-			s.expire = time.NewTimer(s.interval)
-		} else {
-			s.expire.Reset(s.interval)
-		}
-	}
 
 	s.logger.Printf("learn %v %v", req.Index, req.ProposalValue)
 	return s.store.Learn(req)

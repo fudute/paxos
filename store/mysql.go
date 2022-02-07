@@ -53,7 +53,6 @@ func (l *MysqlLogStore) Prepare(req *pb.PrepareRequest) (*pb.PrepareReply, error
 	return &pb.PrepareReply{
 		AcceptedProposal: ins.AcceptedProposal,
 		AcceptedValue:    ins.AcceptedValue,
-		NoMoreAccepted:   l.largestAccepted < req.Index,
 	}, nil
 }
 
