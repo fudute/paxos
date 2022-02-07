@@ -64,12 +64,12 @@ func (s *PaxosService) Propose(ctx context.Context, req *pb.ProposeRequest) (*pb
 
 func (s *PaxosService) chooseOne(value string) (chosen string, err error) {
 	index := s.store.PickSlot()
-	// s.logger.Print("start to chose at ", index)
-	var proposalNum int64
+	s.logger.Print("start to chose at ", index)
 	for {
-		// s.logger.Println("use propose number ", proposalNum)
+		proposalNum := s.proposalGenerator.Next()
+		s.logger.Println("use propose number ", proposalNum)
 
-		proposalNum = s.proposalGenerator.Next()
+		s.logger.Printf("prepare at %v with proposal %v", index, proposalNum)
 		prepareReplys := s.broadcast(s.config.Cluster.Nodes,
 			func(node *config.Node) interface{} {
 				return s.onPrepare(index, proposalNum, node)
@@ -84,6 +84,7 @@ func (s *PaxosService) chooseOne(value string) (chosen string, err error) {
 			}
 		}
 
+		s.logger.Printf("accept at %v with proposal %v value %v", index, proposalNum, value)
 		acceptReplys := s.broadcast(s.config.Cluster.Nodes,
 			func(node *config.Node) interface{} {
 				return s.onAccept(index, proposalNum, value, node)
@@ -136,15 +137,16 @@ func (s *PaxosService) onPrepare(index, proposalNum int64, node *config.Node) *p
 	if err != nil {
 		return nil
 	}
-	reply, err := cli.Prepare(context.Background(), &pb.PrepareRequest{
+	req := &pb.PrepareRequest{
 		Index:       index,
 		ProposalNum: proposalNum,
-	})
+	}
+	reply, err := cli.Prepare(context.Background(), req)
 	if err != nil {
 		s.logger.Printf("Prepare on acceptor %v failed %v", node.Addr, err)
 		return nil
 	}
-	// s.logger.Printf("prepare on %v acceptedProposal %v acceptedValue %v", node.Name, reply.AcceptedProposal, reply.AcceptedValue)
+	s.logger.Printf("prepare on %v req %+v reply %+v", node.Name, req, reply)
 	return reply
 }
 
@@ -153,16 +155,19 @@ func (s *PaxosService) onAccept(index, proposalNum int64, value string, node *co
 	if err != nil {
 		return nil
 	}
-	reply, err := cli.Accept(context.Background(), &pb.AcceptRequest{
+
+	req := &pb.AcceptRequest{
 		Index:         index,
 		ProposalNum:   proposalNum,
 		ProposalValue: value,
-	})
+	}
+
+	reply, err := cli.Accept(context.Background(), req)
 	if err != nil {
 		s.logger.Printf("Accept on acceptor %v failed %v", node.Addr, err)
 		return nil
 	}
-	// s.logger.Printf("accept on %v, reply %v", node.Name, reply.MiniProposal)
+	s.logger.Printf("accept on %v req %+v reply %+v", node.Name, req, reply)
 	return reply
 }
 

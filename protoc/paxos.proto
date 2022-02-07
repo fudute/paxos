@@ -24,7 +24,7 @@ message PrepareRequest {
 message PrepareReply {
     int64 AcceptedProposal = 1;
     string AcceptedValue = 2;
-    string From = 4;
+    string From = 3;
 }
 
 message AcceptRequest {
@@ -39,8 +39,9 @@ message AcceptReply {
 
 message LearnRequest {
     int64 Index = 1;
-    string ProposalValue = 2;
-    string Proposer = 3;
+    int64 ProposalNum = 2;
+    string ProposalValue = 3;
+    string Proposer = 4;
 }
 message LearnReply {
 }
