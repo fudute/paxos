@@ -51,7 +51,7 @@ func (s *PaxosService) Propose(ctx context.Context, req *pb.ProposeRequest) (*pb
 	for {
 		chosen, err := s.chooseOne(req.ProposalValue)
 		if err != nil {
-			s.logger.Print("choose filed ", err)
+			s.logger.Print("choose failed ", err)
 			<-time.After(time.Second)
 			continue
 		}
